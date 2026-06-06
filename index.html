@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Finance Tracker MVP</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="app-header">
+        <div>
+          <p class="eyebrow">Lokaler Finance Tracker</p>
+          <h1>Finanzen erfassen und auswerten</h1>
+        </div>
+        <div class="storage-note">Daten bleiben in diesem Browser</div>
+      </header>
+
+      <nav class="tabs" aria-label="Hauptbereiche">
+        <button class="tab-button active" type="button" data-tab="entry">Neue Buchung</button>
+        <button class="tab-button" type="button" data-tab="dashboard">Dashboard</button>
+      </nav>
+
+      <section class="tab-panel active" id="entry-panel">
+        <div class="content-grid">
+          <form class="card entry-card" id="booking-form" novalidate>
+            <div class="card-header">
+              <h2>Neue Buchung erfassen</h2>
+              <p>Trage Einnahmen oder Ausgaben manuell ein.</p>
+            </div>
+
+            <div class="form-row">
+              <label for="amount">Betrag</label>
+              <input id="amount" name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0,00" required>
+            </div>
+
+            <fieldset class="form-row">
+              <legend>Typ</legend>
+              <div class="segmented-control" role="radiogroup" aria-label="Buchungstyp">
+                <label>
+                  <input type="radio" name="type" value="income" checked>
+                  <span>Einnahme</span>
+                </label>
+                <label>
+                  <input type="radio" name="type" value="expense">
+                  <span>Ausgabe</span>
+                </label>
+              </div>
+            </fieldset>
+
+            <div class="form-row">
+              <div class="label-row">
+                <label for="category">Kategorie</label>
+              </div>
+              <div class="category-input-group">
+                <select id="category" name="category" required>
+                  <option value="">Kategorie wählen</option>
+                </select>
+                <button class="icon-button" id="open-category-dialog" type="button" aria-label="Neue Kategorie hinzufügen">+</button>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <label for="description">Details / Beschreibung</label>
+              <textarea id="description" name="description" rows="4" placeholder="z. B. Tanken, Supermarkt, Versicherung"></textarea>
+            </div>
+
+            <div class="form-row">
+              <label for="date">Datum</label>
+              <input class="date-input" id="date" name="date" type="text" inputmode="numeric" autocomplete="off" placeholder="DD.MM.JJJJ" data-datepicker required>
+            </div>
+
+            <div class="form-actions">
+              <button class="primary-button" type="submit">Buchung speichern</button>
+              <p class="form-message" id="form-message" role="status" aria-live="polite"></p>
+            </div>
+          </form>
+
+          <aside class="card hint-card">
+            <h2>Schneller Überblick</h2>
+            <dl>
+              <div>
+                <dt>Heute</dt>
+                <dd id="today-preview">0,00 €</dd>
+              </div>
+              <div>
+                <dt>Heutige Buchungen</dt>
+                <dd id="entry-count">0</dd>
+              </div>
+            </dl>
+          </aside>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="dashboard-panel">
+        <section class="card filters-card">
+          <div class="card-header">
+            <h2>Dashboard</h2>
+            <p>Wähle den Zeitraum für deine Auswertung.</p>
+          </div>
+
+          <div class="filters">
+            <div class="date-filter-card">
+              <label for="filter-from">Von</label>
+              <input class="date-input" id="filter-from" type="text" inputmode="numeric" autocomplete="off" placeholder="DD.MM.JJJJ" data-datepicker>
+            </div>
+            <div class="date-filter-card">
+              <label for="filter-to">Bis</label>
+              <input class="date-input" id="filter-to" type="text" inputmode="numeric" autocomplete="off" placeholder="DD.MM.JJJJ" data-datepicker>
+            </div>
+          </div>
+        </section>
+
+        <section class="summary-grid" aria-label="Zusammenfassung">
+          <article class="card metric-card">
+            <span>Gesamte Einnahmen</span>
+            <strong id="total-income">0,00 €</strong>
+          </article>
+          <article class="card metric-card">
+            <span>Gesamte Ausgaben</span>
+            <strong id="total-expenses">0,00 €</strong>
+          </article>
+          <article class="card metric-card">
+            <span>Saldo</span>
+            <strong id="total-balance">0,00 €</strong>
+          </article>
+        </section>
+
+        <section class="insights-grid">
+          <article class="card donut-card">
+            <div class="card-header">
+              <h2>Ausgaben nach Kategorie</h2>
+              <p>Auf Basis der aktuellen Filter.</p>
+            </div>
+            <div class="donut-layout">
+              <div class="donut-visual" id="expense-donut"></div>
+              <div class="donut-legend" id="expense-legend"></div>
+            </div>
+            <p class="empty-state" id="expense-empty-state">Keine Ausgaben im gewählten Zeitraum.</p>
+          </article>
+
+          <article class="card expense-detail-card">
+            <div class="card-header">
+              <h2>Ausgaben-Details</h2>
+              <p id="expense-detail-subtitle">Wähle eine Kategorie im Diagramm aus, um die einzelnen Buchungen zu sehen.</p>
+            </div>
+            <div class="detail-placeholder" id="expense-detail-placeholder">
+              Wähle eine Kategorie im Diagramm aus, um die einzelnen Buchungen zu sehen.
+            </div>
+            <div class="detail-content hidden" id="expense-detail-content">
+              <div class="detail-summary">
+                <div>
+                  <span>Gesamtsumme</span>
+                  <strong id="detail-total">0,00 €</strong>
+                </div>
+                <div>
+                  <span>Buchungen</span>
+                  <strong id="detail-count">0</strong>
+                </div>
+              </div>
+              <div class="table-wrap detail-table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Datum</th>
+                      <th>Beschreibung</th>
+                      <th class="align-right">Betrag</th>
+                      <th class="action-col">Aktion</th>
+                    </tr>
+                  </thead>
+                  <tbody id="detail-bookings-table"></tbody>
+                </table>
+              </div>
+            </div>
+          </article>
+        </section>
+      </section>
+    </main>
+
+    <dialog class="category-dialog" id="category-dialog">
+      <form class="category-dialog-card" id="category-form" method="dialog" novalidate>
+        <div class="card-header">
+          <h2>Neue Kategorie</h2>
+          <p>Füge eine Kategorie für Buchungen und Filter hinzu.</p>
+        </div>
+        <div class="form-row">
+          <label for="new-category">Name</label>
+          <input id="new-category" type="text" maxlength="40" placeholder="z. B. Reisen">
+        </div>
+        <p class="form-message category-message" id="category-message" role="status" aria-live="polite"></p>
+        <div class="dialog-actions">
+          <button class="secondary-button" id="cancel-category" type="button">Abbrechen</button>
+          <button class="primary-button" type="submit">Kategorie speichern</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="app.js"></script>
+  </body>
+</html>

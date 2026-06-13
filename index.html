@@ -16,6 +16,20 @@
         <div class="storage-note">Daten bleiben in diesem Browser</div>
       </header>
 
+      <section class="data-actions" aria-label="Daten sichern und Berichte">
+        <div>
+          <h2>Daten sichern</h2>
+          <p>Export, Import und Zeitraum-Report bleiben lokal in deinem Browser.</p>
+        </div>
+        <div class="data-action-buttons">
+          <button class="secondary-button" id="export-backup" type="button">Backup exportieren</button>
+          <button class="secondary-button" id="import-backup" type="button">Backup importieren</button>
+          <button class="secondary-button" id="download-report" type="button">Report als PDF herunterladen</button>
+          <input id="backup-file-input" type="file" accept="application/json,.json" hidden>
+        </div>
+        <p class="data-action-message" id="data-action-message" role="status" aria-live="polite"></p>
+      </section>
+
       <nav class="tabs" aria-label="Hauptbereiche">
         <button class="tab-button active" type="button" data-tab="entry">Neue Buchung</button>
         <button class="tab-button" type="button" data-tab="dashboard">Dashboard</button>
@@ -128,9 +142,15 @@
 
         <section class="insights-grid">
           <article class="card donut-card">
-            <div class="card-header">
-              <h2>Ausgaben nach Kategorie</h2>
-              <p>Auf Basis der aktuellen Filter.</p>
+            <div class="card-header analysis-card-header">
+              <div>
+                <h2 id="analysis-title">Ausgaben nach Kategorie</h2>
+                <p>Auf Basis des gewählten Zeitraums.</p>
+              </div>
+              <div class="analysis-switch" role="group" aria-label="Analysemodus">
+                <button class="analysis-mode-button active" type="button" data-analysis-type="expense" aria-pressed="true">Ausgaben</button>
+                <button class="analysis-mode-button" type="button" data-analysis-type="income" aria-pressed="false">Einnahmen</button>
+              </div>
             </div>
             <div class="donut-layout">
               <div class="donut-visual" id="expense-donut"></div>
@@ -141,7 +161,7 @@
 
           <article class="card expense-detail-card">
             <div class="card-header">
-              <h2>Ausgaben-Details</h2>
+              <h2 id="analysis-detail-title">Ausgaben-Details</h2>
               <p id="expense-detail-subtitle">Wähle eine Kategorie im Diagramm aus, um die einzelnen Buchungen zu sehen.</p>
             </div>
             <div class="detail-placeholder" id="expense-detail-placeholder">

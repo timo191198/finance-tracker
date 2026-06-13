@@ -103,6 +103,54 @@ h2 {
   backdrop-filter: blur(18px);
 }
 
+.data-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px 22px;
+  align-items: center;
+  margin-bottom: 24px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.68);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(18px);
+}
+
+.data-actions h2 {
+  margin-bottom: 3px;
+  font-size: 17px;
+}
+
+.data-actions p {
+  margin-bottom: 0;
+  color: var(--muted);
+}
+
+.data-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.data-action-buttons .secondary-button {
+  padding: 10px 14px;
+  font-size: 14px;
+}
+
+.data-action-message {
+  grid-column: 1 / -1;
+  min-height: 20px;
+  margin: -4px 0 0;
+  color: var(--income);
+  font-weight: 680;
+}
+
+.data-action-message.error {
+  color: var(--expense);
+}
+
 .tabs {
   display: inline-flex;
   gap: 4px;
@@ -493,6 +541,50 @@ textarea:focus {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 24px;
   align-items: stretch;
+}
+
+.analysis-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.analysis-switch {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(88px, 1fr));
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.035);
+}
+
+.analysis-mode-button {
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 13px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 680;
+  transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.analysis-mode-button:hover {
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--text);
+}
+
+.analysis-mode-button.active {
+  background: #ffffff;
+  color: var(--text);
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.09);
+}
+
+.analysis-mode-button:active {
+  transform: scale(0.98);
 }
 
 .donut-card {
@@ -969,9 +1061,21 @@ th {
     grid-template-columns: 1fr;
   }
 
+  .analysis-card-header {
+    flex-direction: column;
+  }
+
   .app-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .data-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .data-action-buttons {
+    justify-content: flex-start;
   }
 }
 

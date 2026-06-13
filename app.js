@@ -25,6 +25,11 @@ const elements = {
   description: document.querySelector("#description"),
   date: document.querySelector("#date"),
   dateInputs: document.querySelectorAll("[data-datepicker]"),
+  exportBackup: document.querySelector("#export-backup"),
+  importBackup: document.querySelector("#import-backup"),
+  backupFileInput: document.querySelector("#backup-file-input"),
+  downloadReport: document.querySelector("#download-report"),
+  dataActionMessage: document.querySelector("#data-action-message"),
   message: document.querySelector("#form-message"),
   todayPreview: document.querySelector("#today-preview"),
   entryCount: document.querySelector("#entry-count"),
@@ -35,9 +40,12 @@ const elements = {
   totalIncome: document.querySelector("#total-income"),
   totalExpenses: document.querySelector("#total-expenses"),
   totalBalance: document.querySelector("#total-balance"),
+  analysisTitle: document.querySelector("#analysis-title"),
+  analysisModeButtons: document.querySelectorAll(".analysis-mode-button"),
   expenseDonut: document.querySelector("#expense-donut"),
   expenseLegend: document.querySelector("#expense-legend"),
   expenseEmptyState: document.querySelector("#expense-empty-state"),
+  detailTitle: document.querySelector("#analysis-detail-title"),
   detailSubtitle: document.querySelector("#expense-detail-subtitle"),
   detailPlaceholder: document.querySelector("#expense-detail-placeholder"),
   detailContent: document.querySelector("#expense-detail-content"),
@@ -48,6 +56,7 @@ const elements = {
 
 let bookings = loadBookings();
 let categories = loadCategories();
+let activeAnalysisType = "expense";
 let activeDatePicker = null;
 let activeDetail = null;
 const chartColors = ["#7f8f8b", "#b9a77d", "#9ba8bf", "#d0a19a", "#8faf9b", "#c3b5cf", "#a9a094", "#94abb1"];
@@ -201,6 +210,326 @@ function saveCategories() {
   localStorage.setItem(CATEGORY_STORAGE_KEY, JSON.stringify(categories));
 }
 
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function setDataActionMessage(text, isError = false) {
+  elements.dataActionMessage.textContent = text;
+  elements.dataActionMessage.classList.toggle("error", isError);
+
+  if (!isError && text) {
+    window.clearTimeout(setDataActionMessage.timeout);
+    setDataActionMessage.timeout = window.setTimeout(() => {
+      elements.dataActionMessage.textContent = "";
+    }, 3200);
+  }
+}
+
+function createBackupData() {
+  return {
+    app: "finance-tracker-mvp",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    data: {
+      bookings,
+      categories,
+      settings: {
+        activeAnalysisType,
+      },
+    },
+  };
+}
+
+function isValidBooking(booking) {
+  return (
+    booking &&
+    typeof booking.id === "string" &&
+    typeof booking.amount === "number" &&
+    (booking.type === "income" || booking.type === "expense") &&
+    typeof booking.category === "string" &&
+    typeof booking.description === "string" &&
+    isValidIsoDate(booking.date)
+  );
+}
+
+function isValidBackupData(backupData) {
+  const data = backupData?.data;
+  return (
+    backupData?.app === "finance-tracker-mvp" &&
+    data &&
+    Array.isArray(data.bookings) &&
+    Array.isArray(data.categories) &&
+    data.bookings.every(isValidBooking) &&
+    data.categories.every((category) => typeof category === "string" && normalizeCategoryName(category))
+  );
+}
+
+function exportBackup() {
+  const backupData = createBackupData();
+  const backupJson = JSON.stringify(backupData, null, 2);
+  const filename = `finance-tracker-backup-${todayIsoDate()}.json`;
+  downloadBlob(new Blob([backupJson], { type: "application/json" }), filename);
+  setDataActionMessage("Backup exportiert.");
+}
+
+function importBackupFile(file) {
+  const reader = new FileReader();
+
+  reader.addEventListener("load", () => {
+    try {
+      const backupData = JSON.parse(String(reader.result || ""));
+
+      if (!isValidBackupData(backupData)) {
+        setDataActionMessage("Die ausgewählte Datei ist kein gültiges Finance-Tracker-Backup.", true);
+        return;
+      }
+
+      const shouldImport = window.confirm("Der Import ersetzt deine aktuellen lokalen Daten. Fortfahren?");
+      if (!shouldImport) {
+        setDataActionMessage("Import abgebrochen.");
+        return;
+      }
+
+      bookings = backupData.data.bookings;
+      categories = mergeCategories(backupData.data.categories.map(normalizeCategoryName));
+      activeAnalysisType = ["income", "expense"].includes(backupData.data.settings?.activeAnalysisType)
+        ? backupData.data.settings.activeAnalysisType
+        : "expense";
+      activeDetail = null;
+      saveBookings();
+      saveCategories();
+      render();
+      setDataActionMessage("Backup importiert.");
+    } catch {
+      setDataActionMessage("Die Backup-Datei konnte nicht gelesen werden.", true);
+    } finally {
+      elements.backupFileInput.value = "";
+    }
+  });
+
+  reader.addEventListener("error", () => {
+    setDataActionMessage("Die Backup-Datei konnte nicht gelesen werden.", true);
+    elements.backupFileInput.value = "";
+  });
+
+  reader.readAsText(file);
+}
+
+function getReportRange() {
+  const from = getDateFilterValue(elements.filters.from) || firstDayOfCurrentMonthIsoDate();
+  const to = getDateFilterValue(elements.filters.to) || todayIsoDate();
+  return { from, to };
+}
+
+function aggregateByCategory(visibleBookings, type) {
+  const totals = new Map();
+
+  visibleBookings
+    .filter((booking) => booking.type === type)
+    .forEach((booking) => {
+      const amount = type === "expense" ? Math.abs(booking.amount) : booking.amount;
+      totals.set(booking.category, (totals.get(booking.category) || 0) + amount);
+    });
+
+  return [...totals.entries()]
+    .map(([category, total]) => ({ category, total }))
+    .sort((first, second) => second.total - first.total);
+}
+
+function getReportData() {
+  const range = getReportRange();
+  const reportBookings = bookings
+    .filter((booking) => booking.date >= range.from && booking.date <= range.to)
+    .sort((first, second) => first.date.localeCompare(second.date));
+  const totals = calculateTotals(reportBookings);
+
+  return {
+    range,
+    bookings: reportBookings,
+    totals,
+    expensesByCategory: aggregateByCategory(reportBookings, "expense"),
+    incomeByCategory: aggregateByCategory(reportBookings, "income"),
+  };
+}
+
+function encodePdfText(text) {
+  const replacements = {
+    "€": "\x80",
+    "‚": "\x82",
+    "ƒ": "\x83",
+    "„": "\x84",
+    "…": "\x85",
+    "†": "\x86",
+    "‡": "\x87",
+    "ˆ": "\x88",
+    "‰": "\x89",
+    "Š": "\x8A",
+    "‹": "\x8B",
+    "Œ": "\x8C",
+    "Ž": "\x8E",
+    "‘": "\x91",
+    "’": "\x92",
+    "“": "\x93",
+    "”": "\x94",
+    "•": "\x95",
+    "–": "\x96",
+    "—": "\x97",
+    "˜": "\x98",
+    "™": "\x99",
+    "š": "\x9A",
+    "›": "\x9B",
+    "œ": "\x9C",
+    "ž": "\x9E",
+    "Ÿ": "\x9F",
+  };
+
+  return String(text)
+    .replace(/[€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ]/g, (char) => replacements[char] || char)
+    .replace(/[^\x09\x0A\x0D\x20-\xFF]/g, "?")
+    .replace(/\\/g, "\\\\")
+    .replace(/\(/g, "\\(")
+    .replace(/\)/g, "\\)");
+}
+
+function createPdfDocument(lines) {
+  const pageWidth = 595.28;
+  const pageHeight = 841.89;
+  const margin = 48;
+  const lineHeight = 15;
+  const objects = [];
+  const pages = [];
+  let currentPage = [];
+  let y = pageHeight - margin;
+
+  function addPage() {
+    if (currentPage.length) pages.push(currentPage);
+    currentPage = [];
+    y = pageHeight - margin;
+  }
+
+  lines.forEach((line) => {
+    const neededHeight = line.gapBefore ? line.gapBefore + lineHeight : lineHeight;
+    if (y - neededHeight < margin) addPage();
+    if (line.gapBefore) y -= line.gapBefore;
+    currentPage.push({ ...line, x: line.x || margin, y, size: line.size || 10 });
+    y -= line.height || lineHeight;
+  });
+
+  if (currentPage.length) pages.push(currentPage);
+
+  objects.push("<< /Type /Catalog /Pages 2 0 R >>");
+  objects.push("");
+  objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
+  objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
+
+  const pageObjectNumbers = [];
+
+  pages.forEach((pageLines) => {
+    const content = pageLines
+      .map((line) => {
+        const font = line.bold ? "F2" : "F1";
+        const color = line.color || "0.12 0.12 0.13";
+        return `BT /${font} ${line.size} Tf ${color} rg ${line.x.toFixed(2)} ${line.y.toFixed(2)} Td (${encodePdfText(line.text)}) Tj ET`;
+      })
+      .join("\n");
+    const streamObjectNumber = objects.length + 1;
+    objects.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
+    const pageObjectNumber = objects.length + 1;
+    pageObjectNumbers.push(pageObjectNumber);
+    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${streamObjectNumber} 0 R >>`);
+  });
+
+  objects[1] = `<< /Type /Pages /Kids [${pageObjectNumbers.map((number) => `${number} 0 R`).join(" ")}] /Count ${pageObjectNumbers.length} >>`;
+
+  let pdf = "%PDF-1.4\n%\xE2\xE3\xCF\xD3\n";
+  const offsets = [0];
+
+  objects.forEach((object, index) => {
+    offsets.push(pdf.length);
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+
+  const xrefOffset = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  offsets.slice(1).forEach((offset) => {
+    pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  });
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+
+  return new Blob([Uint8Array.from(pdf, (char) => char.charCodeAt(0))], { type: "application/pdf" });
+}
+
+function addReportSection(lines, title, rows) {
+  lines.push({ text: title, size: 13, bold: true, gapBefore: 12 });
+
+  if (!rows.length) {
+    lines.push({ text: "Keine Daten vorhanden.", color: "0.43 0.43 0.45" });
+    return;
+  }
+
+  rows.forEach((row) => lines.push(row));
+}
+
+function downloadPdfReport() {
+  const report = getReportData();
+  const rangeLabel = `${formatDateForDisplay(report.range.from)} – ${formatDateForDisplay(report.range.to)}`;
+  const lines = [
+    { text: "Finance Report", size: 22, bold: true },
+    { text: `Zeitraum: ${rangeLabel}`, size: 11, color: "0.43 0.43 0.45", gapBefore: 4 },
+    { text: "Übersicht", size: 14, bold: true, gapBefore: 18 },
+    { text: `Gesamte Einnahmen: ${formatCurrency(report.totals.income)}`, color: "0.14 0.48 0.31" },
+    { text: `Gesamte Ausgaben: ${formatCurrency(-report.totals.expenses)}`, color: "0.69 0.28 0.24" },
+    { text: `Saldo: ${formatCurrency(report.totals.balance)}` },
+  ];
+
+  addReportSection(
+    lines,
+    "Ausgaben nach Kategorie",
+    report.expensesByCategory.map((item) => ({
+      text: `${item.category}: ${formatCurrency(-item.total)}`,
+      color: "0.69 0.28 0.24",
+    }))
+  );
+
+  addReportSection(
+    lines,
+    "Einnahmen nach Kategorie",
+    report.incomeByCategory.map((item) => ({
+      text: `${item.category}: ${formatCurrency(item.total)}`,
+      color: "0.14 0.48 0.31",
+    }))
+  );
+
+  lines.push({ text: "Einzelbuchungen im Zeitraum", size: 14, bold: true, gapBefore: 16 });
+
+  if (!report.bookings.length) {
+    lines.push({ text: "Keine Buchungen im ausgewählten Zeitraum.", color: "0.43 0.43 0.45" });
+  } else {
+    lines.push({ text: "Datum | Typ | Kategorie | Beschreibung | Betrag", bold: true });
+    report.bookings.forEach((booking) => {
+      const description = booking.description || "-";
+      const amountColor = booking.amount < 0 ? "0.69 0.28 0.24" : "0.14 0.48 0.31";
+      lines.push({
+        text: `${formatDateForDisplay(booking.date)} | ${displayType(booking.type)} | ${booking.category} | ${description} | ${formatCurrency(booking.amount)}`,
+        color: amountColor,
+      });
+    });
+  }
+
+  const pdfBlob = createPdfDocument(lines);
+  const filename = `finance-report-${report.range.from}-bis-${report.range.to}.pdf`;
+  downloadBlob(pdfBlob, filename);
+  setDataActionMessage("PDF-Report erstellt.");
+}
+
 function populateSelect(select, options, placeholder) {
   const currentValue = select.value;
   select.innerHTML = "";
@@ -241,6 +570,10 @@ function signedAmount(amount, type) {
 
 function displayType(type) {
   return type === "income" ? "Einnahme" : "Ausgabe";
+}
+
+function displayAnalysisType(type) {
+  return type === "income" ? "Einnahmen" : "Ausgaben";
 }
 
 function formatDate(dateValue) {
@@ -704,7 +1037,7 @@ function renderDonutChart({ container, legend, emptyState, data, type, emptyText
   svg.setAttribute("viewBox", "0 0 180 180");
   svg.setAttribute("class", "donut-svg");
   svg.setAttribute("role", "img");
-  svg.setAttribute("aria-label", "Ausgaben nach Kategorie");
+  svg.setAttribute("aria-label", `${displayAnalysisType(type)} nach Kategorie`);
 
   const backgroundCircle = document.createElementNS(svgNamespace, "circle");
   backgroundCircle.setAttribute("cx", "90");
@@ -770,19 +1103,32 @@ function renderDonutChart({ container, legend, emptyState, data, type, emptyText
   });
 }
 
-function renderExpenseAnalysis(filteredBookings) {
-  const expenseBreakdown = getCategoryBreakdown(filteredBookings, "expense");
+function renderAnalysisModeButtons() {
+  elements.analysisModeButtons.forEach((button) => {
+    const isActive = button.dataset.analysisType === activeAnalysisType;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
+  });
+}
+
+function renderAnalysis(filteredBookings) {
+  const typeLabel = displayAnalysisType(activeAnalysisType);
+  const breakdown = getCategoryBreakdown(filteredBookings, activeAnalysisType);
+
+  elements.analysisTitle.textContent = `${typeLabel} nach Kategorie`;
+  elements.detailTitle.textContent = `${typeLabel}-Details`;
+  renderAnalysisModeButtons();
 
   renderDonutChart({
     container: elements.expenseDonut,
     legend: elements.expenseLegend,
     emptyState: elements.expenseEmptyState,
-    data: expenseBreakdown,
-    type: "expense",
-    emptyText: "Keine Ausgaben im gewählten Zeitraum.",
+    data: breakdown,
+    type: activeAnalysisType,
+    emptyText: activeAnalysisType === "income" ? "Keine Einnahmen im gewählten Zeitraum." : "Keine Ausgaben im gewählten Zeitraum.",
   });
 
-  if (activeDetail && !expenseBreakdown.some((item) => item.category === activeDetail.category)) {
+  if (activeDetail && (activeDetail.type !== activeAnalysisType || !breakdown.some((item) => item.category === activeDetail.category))) {
     activeDetail = null;
   }
 
@@ -806,30 +1152,32 @@ function getDetailBookings(type, category) {
 }
 
 function renderCategoryDetail() {
+  const typeLabel = displayAnalysisType(activeAnalysisType);
+
   if (!activeDetail) {
-    elements.detailSubtitle.textContent = "Wähle eine Kategorie im Diagramm aus, um die einzelnen Buchungen zu sehen.";
+    elements.detailSubtitle.textContent = "Wähle eine Kategorie aus, um Details zu sehen.";
     elements.detailPlaceholder.classList.remove("hidden");
+    elements.detailPlaceholder.textContent = "Wähle eine Kategorie aus, um Details zu sehen.";
     elements.detailContent.classList.add("hidden");
     elements.detailTableBody.innerHTML = "";
     return;
   }
 
-  const { category } = activeDetail;
-  const detailBookings = getDetailBookings("expense", category);
-  const total = detailBookings.reduce((sum, booking) => sum + Math.abs(booking.amount), 0);
+  const { type, category } = activeDetail;
+  const detailBookings = getDetailBookings(type, category);
+  const total = detailBookings.reduce((sum, booking) => sum + (type === "expense" ? Math.abs(booking.amount) : booking.amount), 0);
 
-  elements.detailSubtitle.textContent = `Ausgaben · ${category} · ${getVisibleDateRangeLabel()}`;
+  elements.detailSubtitle.textContent = `${typeLabel} · ${category} · ${getVisibleDateRangeLabel()}`;
   elements.detailPlaceholder.classList.add("hidden");
   elements.detailContent.classList.remove("hidden");
-  elements.detailTotal.textContent = formatCurrency(-total);
-  elements.detailTotal.className = "amount-expense";
+  elements.detailTotal.textContent = type === "expense" ? formatCurrency(-total) : formatCurrency(total);
+  elements.detailTotal.className = type === "expense" ? "amount-expense" : "amount-income";
   elements.detailCount.textContent = String(detailBookings.length);
   createBookingTableRows(elements.detailTableBody, detailBookings, { source: "detail", compact: true });
 }
 
 function openCategoryDetail(type, category) {
-  if (type !== "expense") return;
-  activeDetail = { type: "expense", category };
+  activeDetail = { type, category };
   renderCategoryDetail();
 }
 
@@ -848,7 +1196,7 @@ function render() {
   renderCategoryOptions(elements.category.value);
   const filteredBookings = getFilteredBookings();
   renderMetrics(filteredBookings);
-  renderExpenseAnalysis(filteredBookings);
+  renderAnalysis(filteredBookings);
   renderEntryPreview();
 }
 
@@ -876,6 +1224,21 @@ elements.form.addEventListener("submit", handleSubmit);
 elements.openCategoryDialog.addEventListener("click", openCategoryDialog);
 elements.categoryForm.addEventListener("submit", handleCategorySubmit);
 elements.cancelCategory.addEventListener("click", closeCategoryDialog);
+elements.exportBackup.addEventListener("click", exportBackup);
+elements.importBackup.addEventListener("click", () => elements.backupFileInput.click());
+elements.backupFileInput.addEventListener("change", () => {
+  const [file] = elements.backupFileInput.files;
+  if (file) importBackupFile(file);
+});
+elements.downloadReport.addEventListener("click", downloadPdfReport);
+
+elements.analysisModeButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    activeAnalysisType = button.dataset.analysisType;
+    activeDetail = null;
+    render();
+  });
+});
 
 [elements.filters.from, elements.filters.to].forEach((filter) => {
   filter.addEventListener("input", render);

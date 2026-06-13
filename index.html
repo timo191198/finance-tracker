@@ -16,24 +16,22 @@
         <div class="storage-note">Daten bleiben in diesem Browser</div>
       </header>
 
-      <section class="data-actions" aria-label="Daten sichern und Berichte">
-        <div>
-          <h2>Daten sichern</h2>
-          <p>Export, Import und Zeitraum-Report bleiben lokal in deinem Browser.</p>
-        </div>
-        <div class="data-action-buttons">
-          <button class="secondary-button" id="export-backup" type="button">Backup exportieren</button>
-          <button class="secondary-button" id="import-backup" type="button">Backup importieren</button>
-          <button class="secondary-button" id="download-report" type="button">Report als PDF herunterladen</button>
-          <input id="backup-file-input" type="file" accept="application/json,.json" hidden>
-        </div>
-        <p class="data-action-message" id="data-action-message" role="status" aria-live="polite"></p>
-      </section>
+      <div class="top-toolbar">
+        <nav class="tabs main-tabs" aria-label="Hauptbereiche">
+          <button class="tab-button active" type="button" data-tab="entry">Neue Buchung</button>
+          <button class="tab-button" type="button" data-tab="dashboard">Dashboard</button>
+        </nav>
 
-      <nav class="tabs" aria-label="Hauptbereiche">
-        <button class="tab-button active" type="button" data-tab="entry">Neue Buchung</button>
-        <button class="tab-button" type="button" data-tab="dashboard">Dashboard</button>
-      </nav>
+        <section class="data-actions" aria-label="Daten-Aktionen">
+          <div class="data-action-buttons" role="group" aria-label="Daten-Aktionen">
+            <button class="data-action-button" id="export-backup" type="button">Backup exportieren</button>
+            <button class="data-action-button" id="import-backup" type="button">Backup importieren</button>
+            <button class="data-action-button" id="download-report" type="button">Report als PDF herunterladen</button>
+            <input id="backup-file-input" type="file" accept="application/json,.json" hidden>
+          </div>
+          <p class="data-action-message" id="data-action-message" role="status" aria-live="polite"></p>
+        </section>
+      </div>
 
       <section class="tab-panel active" id="entry-panel">
         <div class="content-grid">

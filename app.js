@@ -1111,6 +1111,14 @@ function renderAnalysisModeButtons() {
   });
 }
 
+function setAnalysisType(type) {
+  if (!["expense", "income"].includes(type) || type === activeAnalysisType) return;
+
+  activeAnalysisType = type;
+  activeDetail = null;
+  render();
+}
+
 function renderAnalysis(filteredBookings) {
   const typeLabel = displayAnalysisType(activeAnalysisType);
   const breakdown = getCategoryBreakdown(filteredBookings, activeAnalysisType);
@@ -1233,11 +1241,7 @@ elements.backupFileInput.addEventListener("change", () => {
 elements.downloadReport.addEventListener("click", downloadPdfReport);
 
 elements.analysisModeButtons.forEach((button) => {
-  button.addEventListener("click", () => {
-    activeAnalysisType = button.dataset.analysisType;
-    activeDetail = null;
-    render();
-  });
+  button.addEventListener("click", (event) => setAnalysisType(event.currentTarget.dataset.analysisType));
 });
 
 [elements.filters.from, elements.filters.to].forEach((filter) => {

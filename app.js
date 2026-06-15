@@ -1,5 +1,7 @@
 const STORAGE_KEY = "finance-tracker-mvp-bookings";
 const CATEGORY_STORAGE_KEY = "finance-tracker-mvp-categories";
+const AUTH_PROFILE_STORAGE_KEY = "finance-tracker-mvp-auth-profiles";
+const AUTH_SESSION_STORAGE_KEY = "finance-tracker-mvp-auth-session";
 const defaultCategories = ["Auto", "Essen", "Kleidung", "Gehalt", "Wohnung", "Freizeit", "Business", "Sonstiges"];
 
 const currencyFormatter = new Intl.NumberFormat("de-DE", {
@@ -8,6 +10,21 @@ const currencyFormatter = new Intl.NumberFormat("de-DE", {
 });
 
 const elements = {
+  authShell: document.querySelector("#auth-shell"),
+  appShell: document.querySelector("#app-shell"),
+  headerTitle: document.querySelector("#header-title"),
+  headerUserName: document.querySelector("#header-user-name"),
+  openProfileDialog: document.querySelector("#open-profile-dialog"),
+  profileDialog: document.querySelector("#profile-dialog"),
+  profileForm: document.querySelector("#profile-form"),
+  profileName: document.querySelector("#profile-name"),
+  profileEmail: document.querySelector("#profile-email"),
+  profileCurrentPassword: document.querySelector("#profile-current-password"),
+  profileNewPassword: document.querySelector("#profile-new-password"),
+  profileNewPasswordConfirm: document.querySelector("#profile-new-password-confirm"),
+  profileMessage: document.querySelector("#profile-message"),
+  cancelProfile: document.querySelector("#cancel-profile"),
+  logoutButton: document.querySelector("#logout-button"),
   tabs: document.querySelectorAll(".tab-button"),
   panels: {
     entry: document.querySelector("#entry-panel"),
@@ -56,6 +73,8 @@ const elements = {
 
 let bookings = loadBookings();
 let categories = loadCategories();
+let currentUser = loadCurrentUser();
+let authView = currentUser ? "loggedIn" : "loggedOut";
 let activeAnalysisType = "expense";
 let activeDatePicker = null;
 let activeDetail = null;
@@ -208,6 +227,360 @@ function saveBookings() {
 
 function saveCategories() {
   localStorage.setItem(CATEGORY_STORAGE_KEY, JSON.stringify(categories));
+}
+
+function loadCurrentUser() {
+  try {
+    const stored = sessionStorage.getItem(AUTH_SESSION_STORAGE_KEY);
+    return stored ? JSON.parse(stored) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveCurrentUser(user) {
+  sessionStorage.setItem(AUTH_SESSION_STORAGE_KEY, JSON.stringify(user));
+}
+
+function clearCurrentUser() {
+  sessionStorage.removeItem(AUTH_SESSION_STORAGE_KEY);
+}
+
+function loadAuthProfiles() {
+  try {
+    const stored = localStorage.getItem(AUTH_PROFILE_STORAGE_KEY);
+    const profiles = stored ? JSON.parse(stored) : [];
+    return Array.isArray(profiles) ? profiles : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveAuthProfile(profile, previousEmail = profile.email) {
+  const emailsToReplace = [profile.email, previousEmail].filter(Boolean).map((email) => email.toLowerCase());
+  const profiles = loadAuthProfiles().filter((item) => !emailsToReplace.includes(item?.email?.toLowerCase()));
+  profiles.push(profile);
+  localStorage.setItem(AUTH_PROFILE_STORAGE_KEY, JSON.stringify(profiles));
+}
+
+function findAuthProfile(email) {
+  return loadAuthProfiles().find((profile) => profile?.email?.toLowerCase() === email.toLowerCase()) || null;
+}
+
+function setAuthView(view) {
+  authView = view;
+  renderAuthScreen();
+}
+
+function setAuthMessage(text, isError = false) {
+  const message = elements.authShell.querySelector("[data-auth-message]");
+  if (!message) return;
+
+  message.textContent = text;
+  message.classList.toggle("error", isError);
+}
+
+function updateHeaderForUser() {
+  const name = normalizeCategoryName(currentUser?.name || "");
+  const title = name ? `${name}'s Finance Tracker` : "Mein Finance Tracker";
+
+  elements.headerTitle.textContent = title;
+  elements.headerUserName.textContent = name || "Mein Account";
+}
+
+function setProfileMessage(text, isError = false) {
+  elements.profileMessage.textContent = text;
+  elements.profileMessage.classList.toggle("error", isError);
+}
+
+function openProfileModal() {
+  elements.profileName.value = normalizeCategoryName(currentUser?.name || "");
+  elements.profileEmail.value = currentUser?.email || "";
+  elements.profileCurrentPassword.value = "";
+  elements.profileNewPassword.value = "";
+  elements.profileNewPasswordConfirm.value = "";
+  setProfileMessage("");
+  elements.profileDialog.showModal();
+  elements.profileName.focus();
+  elements.profileName.select();
+}
+
+function closeProfileModal() {
+  elements.profileDialog.close();
+  setProfileMessage("");
+}
+
+function handleProfileSubmit(event) {
+  event.preventDefault();
+
+  const previousEmail = currentUser?.email || "";
+  const requestedPasswordChange = isPasswordChangeRequested();
+
+  if (!updateUserName()) return;
+  if (!updateUserEmail()) return;
+  if (!updateUserPassword()) return;
+
+  saveCurrentUser(currentUser);
+  saveAuthProfile(currentUser, previousEmail);
+
+  updateHeaderForUser();
+  setProfileMessage(
+    requestedPasswordChange
+      ? "Profil aktualisiert. Passwortänderung wird mit der Cloud-Anbindung aktiviert."
+      : "Profil aktualisiert."
+  );
+}
+
+function updateUserName() {
+  const name = normalizeCategoryName(elements.profileName.value);
+
+  if (!name) {
+    setProfileMessage("Bitte gib einen Namen ein.", true);
+    return false;
+  }
+
+  currentUser = { ...(currentUser || {}), name };
+  return true;
+}
+
+function isLikelyEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function updateUserEmail() {
+  const email = String(elements.profileEmail.value || "").trim();
+
+  if (!email) {
+    setProfileMessage("Bitte gib eine E-Mail-Adresse ein.", true);
+    return false;
+  }
+
+  if (!isLikelyEmail(email)) {
+    setProfileMessage("Bitte gib eine gültige E-Mail-Adresse ein.", true);
+    return false;
+  }
+
+  currentUser = { ...(currentUser || {}), email };
+  return true;
+}
+
+function isPasswordChangeRequested() {
+  return Boolean(
+    elements.profileCurrentPassword.value ||
+      elements.profileNewPassword.value ||
+      elements.profileNewPasswordConfirm.value
+  );
+}
+
+function updateUserPassword() {
+  const currentPassword = String(elements.profileCurrentPassword.value || "");
+  const newPassword = String(elements.profileNewPassword.value || "");
+  const newPasswordConfirm = String(elements.profileNewPasswordConfirm.value || "");
+
+  if (!isPasswordChangeRequested()) return true;
+
+  if (!currentPassword) {
+    setProfileMessage("Bitte gib dein aktuelles Passwort ein.", true);
+    return false;
+  }
+
+  if (!newPassword) {
+    setProfileMessage("Bitte gib ein neues Passwort ein.", true);
+    return false;
+  }
+
+  if (newPassword !== newPasswordConfirm) {
+    setProfileMessage("Das neue Passwort und die Bestätigung stimmen nicht überein.", true);
+    return false;
+  }
+
+  elements.profileCurrentPassword.value = "";
+  elements.profileNewPassword.value = "";
+  elements.profileNewPasswordConfirm.value = "";
+  return true;
+}
+
+function renderAuthScreen() {
+  const isLoggedIn = authView === "loggedIn" && currentUser;
+
+  elements.authShell.classList.toggle("hidden", isLoggedIn);
+  elements.appShell.classList.toggle("hidden", !isLoggedIn);
+
+  if (isLoggedIn) {
+    updateHeaderForUser();
+    elements.authShell.innerHTML = "";
+    return;
+  }
+
+  if (authView === "signup") {
+    renderSignupForm();
+    return;
+  }
+
+  if (authView === "resetPassword") {
+    renderResetPasswordForm();
+    return;
+  }
+
+  renderLoginForm();
+}
+
+function renderAuthCard({ title, body, actions }) {
+  elements.authShell.innerHTML = `
+    <div class="auth-card">
+      <p class="eyebrow">Persönlicher Finance Tracker</p>
+      <h1>${title}</h1>
+      ${body}
+      <p class="auth-message" data-auth-message role="status" aria-live="polite"></p>
+      <div class="auth-links">${actions}</div>
+    </div>
+  `;
+}
+
+function renderLoginForm() {
+  renderAuthCard({
+    title: "Einloggen",
+    body: `
+      <form class="auth-form" id="login-form" novalidate>
+        <div class="form-row">
+          <label for="login-email">E-Mail</label>
+          <input id="login-email" name="email" type="email" autocomplete="email" required>
+        </div>
+        <div class="form-row">
+          <label for="login-password">Passwort</label>
+          <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+        </div>
+        <button class="primary-button auth-submit" type="submit">Einloggen</button>
+      </form>
+    `,
+    actions: `
+      <button class="auth-link" type="button" data-auth-view="resetPassword">Passwort vergessen?</button>
+      <button class="auth-link" type="button" data-auth-view="signup">Noch kein Account? Registrieren</button>
+    `,
+  });
+
+  elements.authShell.querySelector("#login-form").addEventListener("submit", loginUser);
+}
+
+function renderSignupForm() {
+  renderAuthCard({
+    title: "Registrieren",
+    body: `
+      <form class="auth-form" id="signup-form" novalidate>
+        <div class="form-row">
+          <label for="signup-name">Name</label>
+          <input id="signup-name" name="name" type="text" autocomplete="name" required>
+        </div>
+        <div class="form-row">
+          <label for="signup-email">E-Mail</label>
+          <input id="signup-email" name="email" type="email" autocomplete="email" required>
+        </div>
+        <div class="form-row">
+          <label for="signup-password">Passwort</label>
+          <input id="signup-password" name="password" type="password" autocomplete="new-password" required>
+        </div>
+        <div class="form-row">
+          <label for="signup-password-confirm">Passwort bestätigen</label>
+          <input id="signup-password-confirm" name="passwordConfirm" type="password" autocomplete="new-password" required>
+        </div>
+        <button class="primary-button auth-submit" type="submit">Account erstellen</button>
+      </form>
+    `,
+    actions: '<button class="auth-link" type="button" data-auth-view="login">Zurück zum Login</button>',
+  });
+
+  elements.authShell.querySelector("#signup-form").addEventListener("submit", signupUser);
+}
+
+function renderResetPasswordForm() {
+  renderAuthCard({
+    title: "Passwort zurücksetzen",
+    body: `
+      <form class="auth-form" id="reset-password-form" novalidate>
+        <div class="form-row">
+          <label for="reset-email">E-Mail</label>
+          <input id="reset-email" name="email" type="email" autocomplete="email" required>
+        </div>
+        <button class="primary-button auth-submit" type="submit">Reset-Link senden</button>
+      </form>
+    `,
+    actions: '<button class="auth-link" type="button" data-auth-view="login">Zurück zum Login</button>',
+  });
+
+  elements.authShell.querySelector("#reset-password-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const email = String(new FormData(event.currentTarget).get("email") || "").trim();
+
+    if (!email) {
+      setAuthMessage("Bitte gib deine E-Mail-Adresse ein.", true);
+      return;
+    }
+
+    setAuthMessage("Passwort-Reset wird mit der Cloud-Anbindung aktiviert.");
+  });
+}
+
+function loginUser(event) {
+  event.preventDefault();
+  const formData = new FormData(event.currentTarget);
+  const email = String(formData.get("email") || "").trim();
+  const password = String(formData.get("password") || "");
+
+  if (!email || !password) {
+    setAuthMessage("Bitte gib E-Mail und Passwort ein.", true);
+    return;
+  }
+
+  // Temporärer UI-Login: Keine echte Authentifizierung und keine Passwortspeicherung.
+  // Später kann diese Funktion durch Supabase Auth ersetzt werden.
+  const profile = findAuthProfile(email);
+  currentUser = profile || { name: "", email };
+  saveCurrentUser(currentUser);
+  authView = "loggedIn";
+  renderAuthScreen();
+}
+
+function signupUser(event) {
+  event.preventDefault();
+  const formData = new FormData(event.currentTarget);
+  const name = normalizeCategoryName(String(formData.get("name") || ""));
+  const email = String(formData.get("email") || "").trim();
+  const password = String(formData.get("password") || "");
+  const passwordConfirm = String(formData.get("passwordConfirm") || "");
+
+  if (!name) {
+    setAuthMessage("Bitte gib deinen Namen ein.", true);
+    return;
+  }
+
+  if (!email) {
+    setAuthMessage("Bitte gib deine E-Mail-Adresse ein.", true);
+    return;
+  }
+
+  if (!password) {
+    setAuthMessage("Bitte gib ein Passwort ein.", true);
+    return;
+  }
+
+  if (password !== passwordConfirm) {
+    setAuthMessage("Die Passwörter stimmen nicht überein.", true);
+    return;
+  }
+
+  // Für den UI-Prototyp wird nur das Profil gespeichert, niemals das Passwort.
+  currentUser = { name, email };
+  saveAuthProfile(currentUser);
+  saveCurrentUser(currentUser);
+  authView = "loggedIn";
+  renderAuthScreen();
+}
+
+function logoutUser() {
+  currentUser = null;
+  activeDetail = null;
+  clearCurrentUser();
+  setAuthView("loggedOut");
 }
 
 function downloadBlob(blob, filename) {
@@ -1228,6 +1601,17 @@ elements.tabs.forEach((tab) => {
   tab.addEventListener("click", () => switchTab(tab.dataset.tab));
 });
 
+elements.authShell.addEventListener("click", (event) => {
+  if (!(event.target instanceof Element)) return;
+  const viewButton = event.target.closest("[data-auth-view]");
+  if (!viewButton) return;
+  setAuthView(viewButton.dataset.authView);
+});
+
+elements.openProfileDialog.addEventListener("click", openProfileModal);
+elements.profileForm.addEventListener("submit", handleProfileSubmit);
+elements.cancelProfile.addEventListener("click", closeProfileModal);
+elements.logoutButton.addEventListener("click", logoutUser);
 elements.form.addEventListener("submit", handleSubmit);
 elements.openCategoryDialog.addEventListener("click", openCategoryDialog);
 elements.categoryForm.addEventListener("submit", handleCategorySubmit);
@@ -1260,3 +1644,4 @@ setDateInputValue(elements.filters.to, todayIsoDate());
 initDatePickers();
 saveCategories();
 render();
+renderAuthScreen();

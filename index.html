@@ -7,13 +7,21 @@
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
-    <main class="app-shell">
+    <section class="auth-shell" id="auth-shell" aria-live="polite"></section>
+
+    <main class="app-shell hidden" id="app-shell">
       <header class="app-header">
         <div>
-          <p class="eyebrow">Lokaler Finance Tracker</p>
-          <h1>Finanzen erfassen und auswerten</h1>
+          <h1 id="header-title">Mein Finance Tracker</h1>
         </div>
-        <div class="storage-note">Daten bleiben in diesem Browser</div>
+        <div class="header-actions">
+          <div class="storage-note">Daten bleiben in diesem Browser</div>
+          <div class="user-menu">
+            <span id="header-user-name">Mein Account</span>
+            <button class="profile-button" id="open-profile-dialog" type="button">Profil</button>
+            <button class="logout-button" id="logout-button" type="button">Logout</button>
+          </div>
+        </div>
       </header>
 
       <div class="top-toolbar">
@@ -209,6 +217,53 @@
         <div class="dialog-actions">
           <button class="secondary-button" id="cancel-category" type="button">Abbrechen</button>
           <button class="primary-button" type="submit">Kategorie speichern</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="profile-dialog" id="profile-dialog">
+      <form class="profile-dialog-card" id="profile-form" method="dialog" novalidate>
+        <div class="card-header">
+          <h2>Profil bearbeiten</h2>
+          <p>Aktualisiere deine Account-Angaben für den vorbereiteten Login-Flow.</p>
+        </div>
+
+        <section class="profile-section">
+          <h3>Name ändern</h3>
+          <div class="form-row">
+            <label for="profile-name">Name</label>
+            <input id="profile-name" type="text" autocomplete="name" maxlength="60" required>
+          </div>
+        </section>
+
+        <section class="profile-section">
+          <h3>E-Mail ändern</h3>
+          <div class="form-row">
+            <label for="profile-email">E-Mail</label>
+            <input id="profile-email" type="email" autocomplete="email" required>
+          </div>
+        </section>
+
+        <section class="profile-section">
+          <h3>Passwort ändern</h3>
+          <div class="form-row">
+            <label for="profile-current-password">Aktuelles Passwort</label>
+            <input id="profile-current-password" type="password" autocomplete="current-password">
+          </div>
+          <div class="form-row">
+            <label for="profile-new-password">Neues Passwort</label>
+            <input id="profile-new-password" type="password" autocomplete="new-password">
+          </div>
+          <div class="form-row">
+            <label for="profile-new-password-confirm">Neues Passwort bestätigen</label>
+            <input id="profile-new-password-confirm" type="password" autocomplete="new-password">
+          </div>
+        </section>
+
+        <p class="form-message profile-message" id="profile-message" role="status" aria-live="polite"></p>
+        <div class="dialog-actions">
+          <button class="secondary-button" id="cancel-profile" type="button">Abbrechen</button>
+          <button class="primary-button" type="submit">Änderungen speichern</button>
         </div>
       </form>
     </dialog>

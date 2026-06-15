@@ -47,6 +47,76 @@ button {
   -webkit-tap-highlight-color: transparent;
 }
 
+.auth-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 40px 18px;
+}
+
+.auth-card {
+  width: min(430px, 100%);
+  padding: 34px;
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(24px);
+}
+
+.auth-card h1 {
+  margin-bottom: 26px;
+  font-size: 34px;
+}
+
+.auth-form {
+  display: grid;
+  gap: 2px;
+}
+
+.auth-submit {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.auth-message {
+  min-height: 24px;
+  margin: 15px 0 0;
+  color: var(--income);
+  font-weight: 680;
+}
+
+.auth-message.error {
+  color: var(--expense);
+}
+
+.auth-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 12px;
+}
+
+.auth-link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--muted-strong);
+  cursor: pointer;
+  font-weight: 680;
+}
+
+.auth-link:hover {
+  color: var(--text);
+}
+
+.auth-link:focus-visible,
+.profile-button:focus-visible,
+.logout-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.075);
+}
+
 .app-shell {
   width: min(1160px, calc(100vw - 72px));
   margin: 0 auto;
@@ -101,6 +171,50 @@ h2 {
   font-size: 14px;
   box-shadow: var(--shadow-soft);
   backdrop-filter: blur(18px);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.user-menu {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--muted-strong);
+  font-size: 14px;
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(18px);
+}
+
+.profile-button,
+.logout-button {
+  border: 0;
+  border-radius: 999px;
+  padding: 7px 11px;
+  background: rgba(0, 0, 0, 0.055);
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 680;
+  transition: background 160ms ease, transform 160ms ease;
+}
+
+.profile-button:hover,
+.logout-button:hover {
+  background: rgba(0, 0, 0, 0.085);
+}
+
+.profile-button:active,
+.logout-button:active {
+  transform: scale(0.98);
 }
 
 .top-toolbar {
@@ -922,12 +1036,22 @@ th {
   background: transparent;
 }
 
-.category-dialog::backdrop {
+.profile-dialog {
+  width: min(520px, calc(100vw - 40px));
+  border: 0;
+  border-radius: 24px;
+  padding: 0;
+  background: transparent;
+}
+
+.category-dialog::backdrop,
+.profile-dialog::backdrop {
   background: rgba(30, 30, 32, 0.32);
   backdrop-filter: blur(10px);
 }
 
-.category-dialog-card {
+.category-dialog-card,
+.profile-dialog-card {
   padding: 26px;
   border: 1px solid rgba(255, 255, 255, 0.72);
   border-radius: 24px;
@@ -935,7 +1059,31 @@ th {
   box-shadow: 0 28px 80px rgba(0, 0, 0, 0.22);
 }
 
-.category-message {
+.profile-dialog-card {
+  max-height: min(84vh, 780px);
+  overflow: auto;
+}
+
+.profile-section {
+  display: grid;
+  gap: 12px;
+  padding: 18px 0;
+  border-top: 1px solid rgba(0, 0, 0, 0.075);
+}
+
+.profile-section h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 760;
+}
+
+.profile-section .form-row {
+  margin-bottom: 0;
+}
+
+.category-message,
+.profile-message {
   min-height: 24px;
   margin-bottom: 14px;
 }

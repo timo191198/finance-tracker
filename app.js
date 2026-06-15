@@ -1,7 +1,7 @@
 const STORAGE_KEY = "finance-tracker-mvp-bookings";
 const CATEGORY_STORAGE_KEY = "finance-tracker-mvp-categories";
-const AUTH_PROFILE_STORAGE_KEY = "finance-tracker-mvp-auth-profiles";
-const AUTH_SESSION_STORAGE_KEY = "finance-tracker-mvp-auth-session";
+const SUPABASE_URL = "https://zrvdnnwdbihzdurpryce.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpydmRubndkYmloemR1cnByeWNlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE1NDA3MTQsImV4cCI6MjA5NzExNjcxNH0.QGQB1F-0vZHjvftHwIBQKn9MnmE-aNoZjF5ws6wCaDY";
 const defaultCategories = ["Auto", "Essen", "Kleidung", "Gehalt", "Wohnung", "Freizeit", "Business", "Sonstiges"];
 
 const currencyFormatter = new Intl.NumberFormat("de-DE", {
@@ -73,8 +73,9 @@ const elements = {
 
 let bookings = loadBookings();
 let categories = loadCategories();
-let currentUser = loadCurrentUser();
-let authView = currentUser ? "loggedIn" : "loggedOut";
+let supabaseClient = null;
+let currentUser = null;
+let authView = "loggedOut";
 let activeAnalysisType = "expense";
 let activeDatePicker = null;
 let activeDetail = null;
@@ -229,42 +230,54 @@ function saveCategories() {
   localStorage.setItem(CATEGORY_STORAGE_KEY, JSON.stringify(categories));
 }
 
-function loadCurrentUser() {
-  try {
-    const stored = sessionStorage.getItem(AUTH_SESSION_STORAGE_KEY);
-    return stored ? JSON.parse(stored) : null;
-  } catch {
-    return null;
+function initSupabase() {
+  if (!window.supabase?.createClient) {
+    authView = "loggedOut";
+    renderAuthScreen();
+    setAuthMessage("Supabase konnte nicht geladen werden. Bitte prüfe deine Internetverbindung.", true);
+    return false;
   }
+
+  supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  });
+
+  supabaseClient.auth.onAuthStateChange((_event, session) => {
+    currentUser = session?.user || null;
+    authView = currentUser ? "loggedIn" : "loggedOut";
+    renderAuthScreen();
+  });
+
+  return true;
 }
 
-function saveCurrentUser(user) {
-  sessionStorage.setItem(AUTH_SESSION_STORAGE_KEY, JSON.stringify(user));
-}
-
-function clearCurrentUser() {
-  sessionStorage.removeItem(AUTH_SESSION_STORAGE_KEY);
-}
-
-function loadAuthProfiles() {
-  try {
-    const stored = localStorage.getItem(AUTH_PROFILE_STORAGE_KEY);
-    const profiles = stored ? JSON.parse(stored) : [];
-    return Array.isArray(profiles) ? profiles : [];
-  } catch {
-    return [];
+async function checkAuthSession() {
+  if (!supabaseClient) {
+    renderAuthScreen();
+    return;
   }
+
+  const { data, error } = await supabaseClient.auth.getSession();
+
+  if (error) {
+    currentUser = null;
+    authView = "loggedOut";
+    renderAuthScreen();
+    setAuthMessage(error.message || "Session konnte nicht geprüft werden.", true);
+    return;
+  }
+
+  currentUser = data.session?.user || null;
+  authView = currentUser ? "loggedIn" : "loggedOut";
+  renderAuthScreen();
 }
 
-function saveAuthProfile(profile, previousEmail = profile.email) {
-  const emailsToReplace = [profile.email, previousEmail].filter(Boolean).map((email) => email.toLowerCase());
-  const profiles = loadAuthProfiles().filter((item) => !emailsToReplace.includes(item?.email?.toLowerCase()));
-  profiles.push(profile);
-  localStorage.setItem(AUTH_PROFILE_STORAGE_KEY, JSON.stringify(profiles));
-}
-
-function findAuthProfile(email) {
-  return loadAuthProfiles().find((profile) => profile?.email?.toLowerCase() === email.toLowerCase()) || null;
+function getUserDisplayName(user = currentUser) {
+  return normalizeCategoryName(user?.user_metadata?.full_name || user?.user_metadata?.name || "");
 }
 
 function setAuthView(view) {
@@ -281,11 +294,11 @@ function setAuthMessage(text, isError = false) {
 }
 
 function updateHeaderForUser() {
-  const name = normalizeCategoryName(currentUser?.name || "");
+  const name = getUserDisplayName();
   const title = name ? `${name}'s Finance Tracker` : "Mein Finance Tracker";
 
   elements.headerTitle.textContent = title;
-  elements.headerUserName.textContent = name || "Mein Account";
+  elements.headerUserName.textContent = name || currentUser?.email || "Mein Account";
 }
 
 function setProfileMessage(text, isError = false) {
@@ -294,7 +307,7 @@ function setProfileMessage(text, isError = false) {
 }
 
 function openProfileModal() {
-  elements.profileName.value = normalizeCategoryName(currentUser?.name || "");
+  elements.profileName.value = getUserDisplayName();
   elements.profileEmail.value = currentUser?.email || "";
   elements.profileCurrentPassword.value = "";
   elements.profileNewPassword.value = "";
@@ -310,28 +323,17 @@ function closeProfileModal() {
   setProfileMessage("");
 }
 
-function handleProfileSubmit(event) {
+async function updateUserProfile(event) {
   event.preventDefault();
 
-  const previousEmail = currentUser?.email || "";
-  const requestedPasswordChange = isPasswordChangeRequested();
-
-  if (!updateUserName()) return;
-  if (!updateUserEmail()) return;
-  if (!updateUserPassword()) return;
-
-  saveCurrentUser(currentUser);
-  saveAuthProfile(currentUser, previousEmail);
+  if (!(await updateUserName())) return;
+  if (!(await updateUserEmail())) return;
+  if (!(await updateUserPassword())) return;
 
   updateHeaderForUser();
-  setProfileMessage(
-    requestedPasswordChange
-      ? "Profil aktualisiert. Passwortänderung wird mit der Cloud-Anbindung aktiviert."
-      : "Profil aktualisiert."
-  );
 }
 
-function updateUserName() {
+async function updateUserName() {
   const name = normalizeCategoryName(elements.profileName.value);
 
   if (!name) {
@@ -339,7 +341,20 @@ function updateUserName() {
     return false;
   }
 
-  currentUser = { ...(currentUser || {}), name };
+  const { data, error } = await supabaseClient.auth.updateUser({
+    data: {
+      name,
+      full_name: name,
+    },
+  });
+
+  if (error) {
+    setProfileMessage(error.message || "Name konnte nicht aktualisiert werden.", true);
+    return false;
+  }
+
+  currentUser = data.user;
+  setProfileMessage("Name aktualisiert.");
   return true;
 }
 
@@ -347,7 +362,11 @@ function isLikelyEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-function updateUserEmail() {
+function getAuthRedirectUrl() {
+  return window.location.protocol === "http:" || window.location.protocol === "https:" ? window.location.href : undefined;
+}
+
+async function updateUserEmail() {
   const email = String(elements.profileEmail.value || "").trim();
 
   if (!email) {
@@ -360,7 +379,17 @@ function updateUserEmail() {
     return false;
   }
 
-  currentUser = { ...(currentUser || {}), email };
+  if (email === currentUser?.email) return true;
+
+  const { data, error } = await supabaseClient.auth.updateUser({ email });
+
+  if (error) {
+    setProfileMessage(error.message || "E-Mail konnte nicht aktualisiert werden.", true);
+    return false;
+  }
+
+  currentUser = data.user || currentUser;
+  setProfileMessage("E-Mail-Änderung gestartet. Bitte prüfe ggf. deine Bestätigungs-E-Mail.");
   return true;
 }
 
@@ -372,7 +401,7 @@ function isPasswordChangeRequested() {
   );
 }
 
-function updateUserPassword() {
+async function updateUserPassword() {
   const currentPassword = String(elements.profileCurrentPassword.value || "");
   const newPassword = String(elements.profileNewPassword.value || "");
   const newPasswordConfirm = String(elements.profileNewPasswordConfirm.value || "");
@@ -394,9 +423,18 @@ function updateUserPassword() {
     return false;
   }
 
+  const { data, error } = await supabaseClient.auth.updateUser({ password: newPassword });
+
+  if (error) {
+    setProfileMessage(error.message || "Passwort konnte nicht aktualisiert werden.", true);
+    return false;
+  }
+
+  currentUser = data.user || currentUser;
   elements.profileCurrentPassword.value = "";
   elements.profileNewPassword.value = "";
   elements.profileNewPasswordConfirm.value = "";
+  setProfileMessage("Passwort aktualisiert.");
   return true;
 }
 
@@ -459,7 +497,7 @@ function renderLoginForm() {
     `,
   });
 
-  elements.authShell.querySelector("#login-form").addEventListener("submit", loginUser);
+  elements.authShell.querySelector("#login-form").addEventListener("submit", signInUser);
 }
 
 function renderSignupForm() {
@@ -489,7 +527,7 @@ function renderSignupForm() {
     actions: '<button class="auth-link" type="button" data-auth-view="login">Zurück zum Login</button>',
   });
 
-  elements.authShell.querySelector("#signup-form").addEventListener("submit", signupUser);
+  elements.authShell.querySelector("#signup-form").addEventListener("submit", signUpUser);
 }
 
 function renderResetPasswordForm() {
@@ -507,20 +545,10 @@ function renderResetPasswordForm() {
     actions: '<button class="auth-link" type="button" data-auth-view="login">Zurück zum Login</button>',
   });
 
-  elements.authShell.querySelector("#reset-password-form").addEventListener("submit", (event) => {
-    event.preventDefault();
-    const email = String(new FormData(event.currentTarget).get("email") || "").trim();
-
-    if (!email) {
-      setAuthMessage("Bitte gib deine E-Mail-Adresse ein.", true);
-      return;
-    }
-
-    setAuthMessage("Passwort-Reset wird mit der Cloud-Anbindung aktiviert.");
-  });
+  elements.authShell.querySelector("#reset-password-form").addEventListener("submit", resetPassword);
 }
 
-function loginUser(event) {
+async function signInUser(event) {
   event.preventDefault();
   const formData = new FormData(event.currentTarget);
   const email = String(formData.get("email") || "").trim();
@@ -531,16 +559,22 @@ function loginUser(event) {
     return;
   }
 
-  // Temporärer UI-Login: Keine echte Authentifizierung und keine Passwortspeicherung.
-  // Später kann diese Funktion durch Supabase Auth ersetzt werden.
-  const profile = findAuthProfile(email);
-  currentUser = profile || { name: "", email };
-  saveCurrentUser(currentUser);
+  const { data, error } = await supabaseClient.auth.signInWithPassword({
+    email,
+    password,
+  });
+
+  if (error) {
+    setAuthMessage(error.message || "Login fehlgeschlagen.", true);
+    return;
+  }
+
+  currentUser = data.user;
   authView = "loggedIn";
   renderAuthScreen();
 }
 
-function signupUser(event) {
+async function signUpUser(event) {
   event.preventDefault();
   const formData = new FormData(event.currentTarget);
   const name = normalizeCategoryName(String(formData.get("name") || ""));
@@ -568,18 +602,67 @@ function signupUser(event) {
     return;
   }
 
-  // Für den UI-Prototyp wird nur das Profil gespeichert, niemals das Passwort.
-  currentUser = { name, email };
-  saveAuthProfile(currentUser);
-  saveCurrentUser(currentUser);
-  authView = "loggedIn";
-  renderAuthScreen();
+  const { data, error } = await supabaseClient.auth.signUp({
+    email,
+    password,
+    options: {
+      data: {
+        name,
+        full_name: name,
+      },
+      emailRedirectTo: getAuthRedirectUrl(),
+    },
+  });
+
+  if (error) {
+    setAuthMessage(error.message || "Registrierung fehlgeschlagen.", true);
+    return;
+  }
+
+  if (data.session && data.user) {
+    currentUser = data.user;
+    authView = "loggedIn";
+    renderAuthScreen();
+    return;
+  }
+
+  setAuthView("login");
+  setAuthMessage("Registrierung erstellt. Bitte prüfe deine E-Mail zur Bestätigung.");
 }
 
-function logoutUser() {
+async function resetPassword(event) {
+  event.preventDefault();
+  const email = String(new FormData(event.currentTarget).get("email") || "").trim();
+
+  if (!email) {
+    setAuthMessage("Bitte gib deine E-Mail-Adresse ein.", true);
+    return;
+  }
+
+  const { error } = await supabaseClient.auth.resetPasswordForEmail(email, {
+    redirectTo: getAuthRedirectUrl(),
+  });
+
+  if (error) {
+    setAuthMessage(error.message || "Reset-Link konnte nicht gesendet werden.", true);
+    return;
+  }
+
+  setAuthMessage("Reset-Link wurde gesendet. Bitte prüfe deine E-Mails.");
+}
+
+async function signOutUser() {
+  if (supabaseClient) {
+    const { error } = await supabaseClient.auth.signOut();
+
+    if (error) {
+      setDataActionMessage(error.message || "Logout fehlgeschlagen.", true);
+      return;
+    }
+  }
+
   currentUser = null;
   activeDetail = null;
-  clearCurrentUser();
   setAuthView("loggedOut");
 }
 
@@ -1609,9 +1692,9 @@ elements.authShell.addEventListener("click", (event) => {
 });
 
 elements.openProfileDialog.addEventListener("click", openProfileModal);
-elements.profileForm.addEventListener("submit", handleProfileSubmit);
+elements.profileForm.addEventListener("submit", updateUserProfile);
 elements.cancelProfile.addEventListener("click", closeProfileModal);
-elements.logoutButton.addEventListener("click", logoutUser);
+elements.logoutButton.addEventListener("click", signOutUser);
 elements.form.addEventListener("submit", handleSubmit);
 elements.openCategoryDialog.addEventListener("click", openCategoryDialog);
 elements.categoryForm.addEventListener("submit", handleCategorySubmit);
@@ -1644,4 +1727,6 @@ setDateInputValue(elements.filters.to, todayIsoDate());
 initDatePickers();
 saveCategories();
 render();
-renderAuthScreen();
+if (initSupabase()) {
+  checkAuthSession();
+}

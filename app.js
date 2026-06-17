@@ -86,6 +86,9 @@ let categories = loadLocalCategories();
 let supabaseClient = null;
 let currentUser = null;
 let authView = "loggedOut";
+let authSessionCheckId = 0;
+let authSessionTimeoutId = null;
+let isSigningOut = false;
 let activeAnalysisType = "expense";
 let activeDatePicker = null;
 let activeDetail = null;
@@ -427,6 +430,39 @@ function showLocalDataNotice() {
   }
 }
 
+function clearAuthSessionTimeout() {
+  if (!authSessionTimeoutId) return;
+
+  window.clearTimeout(authSessionTimeoutId);
+  authSessionTimeoutId = null;
+  console.log("auth: session timeout cleared");
+}
+
+function resetAppStateForLoggedOut() {
+  currentUser = null;
+  authView = "loggedOut";
+  activeDetail = null;
+  bookings = [];
+  categories = loadLocalCategories();
+  render();
+}
+
+function renderLoggedOut() {
+  resetAppStateForLoggedOut();
+  renderAuthScreen();
+}
+
+async function applyAuthenticatedSession(user, source) {
+  clearAuthSessionTimeout();
+  isSigningOut = false;
+  currentUser = user;
+  authView = "loggedIn";
+  console.log(`auth: signed in via ${source}`);
+  renderAuthScreen();
+  await loadUserData();
+  renderAuthScreen();
+}
+
 function loadSupabaseLibrary() {
   if (window.supabase?.createClient) return Promise.resolve(true);
 
@@ -452,9 +488,11 @@ function loadSupabaseLibrary() {
 }
 
 async function initSupabase() {
+  console.log("auth: supabase init start");
   const supabaseLoaded = await loadSupabaseLibrary();
 
   if (!supabaseLoaded) {
+    console.error("auth: supabase library failed to load");
     authView = "loggedOut";
     renderAuthScreen();
     setAuthMessage("Supabase konnte nicht geladen werden. Bitte prüfe deine Internetverbindung.", true);
@@ -469,19 +507,25 @@ async function initSupabase() {
     },
   });
 
-  supabaseClient.auth.onAuthStateChange(async (_event, session) => {
-    currentUser = session?.user || null;
-    authView = currentUser ? "loggedIn" : "loggedOut";
-    if (currentUser) {
-      renderAuthScreen();
-      await loadUserData();
-    } else {
-      bookings = [];
-      categories = loadLocalCategories();
-      activeDetail = null;
-      render();
+  console.log("auth: supabase client initialized");
+
+  supabaseClient.auth.onAuthStateChange(async (event, session) => {
+    console.log(`auth: state change ${event}`);
+
+    if (event === "SIGNED_OUT") {
+      clearAuthSessionTimeout();
+      renderLoggedOut();
+      return;
     }
-    renderAuthScreen();
+
+    if (session?.user && (event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "INITIAL_SESSION")) {
+      await applyAuthenticatedSession(session.user, event);
+      return;
+    }
+
+    if (!session?.user && !isSigningOut) {
+      renderLoggedOut();
+    }
   });
 
   return true;
@@ -493,15 +537,38 @@ async function checkAuthSession() {
     return;
   }
 
+  const checkId = authSessionCheckId + 1;
+  authSessionCheckId = checkId;
+  clearAuthSessionTimeout();
+  console.log(`auth: getSession start #${checkId}`);
+
+  const timeoutPromise = new Promise((resolve) => {
+    authSessionTimeoutId = window.setTimeout(() => {
+      console.log(`auth: getSession timeout #${checkId}`);
+      resolve({ data: { session: null }, error: null, timedOut: true, checkId });
+    }, 8000);
+    console.log(`auth: session timeout started #${checkId}`);
+  });
+
   const sessionResult = await Promise.race([
-    supabaseClient.auth.getSession(),
-    new Promise((resolve) => {
-      window.setTimeout(() => resolve({ data: { session: null }, error: null, timedOut: true }), 8000);
-    }),
+    supabaseClient.auth.getSession().then((result) => ({ ...result, checkId })),
+    timeoutPromise,
   ]);
   const { data, error, timedOut } = sessionResult;
 
+  if (checkId !== authSessionCheckId) {
+    console.log(`auth: stale getSession result ignored #${checkId}`);
+    return;
+  }
+
+  clearAuthSessionTimeout();
+
   if (timedOut) {
+    if (currentUser) {
+      console.log(`auth: timeout ignored because user is already signed in #${checkId}`);
+      return;
+    }
+
     currentUser = null;
     authView = "loggedOut";
     renderAuthScreen();
@@ -518,13 +585,14 @@ async function checkAuthSession() {
     return;
   }
 
-  currentUser = data.session?.user || null;
-  authView = currentUser ? "loggedIn" : "loggedOut";
-  if (currentUser) {
-    renderAuthScreen();
-    await loadUserData();
+  console.log(`auth: getSession success #${checkId}`, { hasSession: Boolean(data.session?.user) });
+
+  if (data.session?.user) {
+    await applyAuthenticatedSession(data.session.user, "getSession");
+    return;
   }
-  renderAuthScreen();
+
+  renderLoggedOut();
 }
 
 function getUserDisplayName(user = currentUser) {
@@ -573,24 +641,44 @@ function closeProfileModal() {
   setProfileMessage("");
 }
 
+function setProfileLoading(isLoading) {
+  const submitButton = elements.profileForm.querySelector('button[type="submit"]');
+  if (!submitButton) return;
+
+  submitButton.disabled = isLoading;
+  submitButton.textContent = isLoading ? "Speichert..." : "Änderungen speichern";
+}
+
 async function updateUserProfile(event) {
   event.preventDefault();
 
-  if (!(await updateUserName())) return;
-  if (!(await updateUserEmail())) return;
-  if (!(await updateUserPassword())) return;
+  setProfileLoading(true);
 
-  updateHeaderForUser();
-  closeProfileModal();
+  try {
+    const passwordChangeRequested = isPasswordChangeRequested();
+
+    if (!(await updateUserName())) return;
+    if (!(await updateUserEmail())) return;
+    if (!(await updateUserPassword())) return;
+
+    updateHeaderForUser();
+    closeProfileModal();
+    setDataActionMessage(passwordChangeRequested ? "Passwort wurde aktualisiert." : "Profil aktualisiert.");
+  } finally {
+    setProfileLoading(false);
+  }
 }
 
 async function updateUserName() {
   const name = normalizeCategoryName(elements.profileName.value);
+  const currentName = getUserDisplayName();
 
   if (!name) {
     setProfileMessage("Bitte gib einen Namen ein.", true);
     return false;
   }
+
+  if (name === currentName) return true;
 
   const { data, error } = await supabaseClient.auth.updateUser({
     data: {
@@ -619,6 +707,7 @@ function getAuthRedirectUrl() {
 
 async function updateUserEmail() {
   const email = String(elements.profileEmail.value || "").trim();
+  const currentEmail = currentUser?.email || "";
 
   if (!email) {
     setProfileMessage("Bitte gib eine E-Mail-Adresse ein.", true);
@@ -630,7 +719,7 @@ async function updateUserEmail() {
     return false;
   }
 
-  if (email === currentUser?.email) return true;
+  if (email === currentEmail) return true;
 
   const { data, error } = await supabaseClient.auth.updateUser({ email });
 
@@ -814,10 +903,9 @@ async function signInUser(event) {
     return;
   }
 
-  currentUser = data.user;
-  authView = "loggedIn";
-  await loadUserData();
-  renderAuthScreen();
+  if (data.user) {
+    await applyAuthenticatedSession(data.user, "signIn");
+  }
 }
 
 async function signUpUser(event) {
@@ -866,10 +954,7 @@ async function signUpUser(event) {
   }
 
   if (data.session && data.user) {
-    currentUser = data.user;
-    authView = "loggedIn";
-    await loadUserData();
-    renderAuthScreen();
+    await applyAuthenticatedSession(data.user, "signUp");
     return;
   }
 
@@ -899,21 +984,25 @@ async function resetPassword(event) {
 }
 
 async function signOutUser() {
+  console.log("auth: logout clicked");
+  isSigningOut = true;
+  authSessionCheckId += 1;
+  clearAuthSessionTimeout();
+
   if (supabaseClient) {
     const { error } = await supabaseClient.auth.signOut();
 
     if (error) {
+      console.error("auth: logout failed", error);
+      isSigningOut = false;
       setDataActionMessage(error.message || "Logout fehlgeschlagen.", true);
       return;
     }
   }
 
-  currentUser = null;
-  activeDetail = null;
-  bookings = [];
-  categories = loadLocalCategories();
-  render();
-  setAuthView("loggedOut");
+  console.log("auth: logout success");
+  isSigningOut = false;
+  renderLoggedOut();
 }
 
 function downloadBlob(blob, filename) {
@@ -2017,6 +2106,7 @@ function handleGlobalStartupError(error) {
 
 async function initializeApp() {
   try {
+    console.log("auth: init start");
     setDateInputValue(elements.date, todayIsoDate());
     setDateInputValue(elements.filters.from, firstDayOfCurrentMonthIsoDate());
     setDateInputValue(elements.filters.to, todayIsoDate());
@@ -2029,6 +2119,8 @@ async function initializeApp() {
 
     if (await initSupabase()) {
       await checkAuthSession();
+    } else {
+      console.log("auth: supabase init failed, login screen remains visible");
     }
   } catch (error) {
     showStartupFallback(error);

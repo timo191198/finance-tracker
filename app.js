@@ -2,7 +2,18 @@ const STORAGE_KEY = "finance-tracker-mvp-bookings";
 const CATEGORY_STORAGE_KEY = "finance-tracker-mvp-categories";
 const SUPABASE_URL = "https://zrvdnnwdbihzdurpryce.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpydmRubndkYmloemR1cnByeWNlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE1NDA3MTQsImV4cCI6MjA5NzExNjcxNH0.QGQB1F-0vZHjvftHwIBQKn9MnmE-aNoZjF5ws6wCaDY";
-const defaultCategories = ["Auto", "Essen", "Kleidung", "Gehalt", "Wohnung", "Freizeit", "Business", "Sonstiges"];
+const defaultCategories = [
+  "Auto",
+  "Essen",
+  "Kleidung",
+  "Gehalt",
+  "Wohnung",
+  "Freizeit",
+  "Business",
+  "Investieren",
+  "Bildung",
+  "Sonstiges",
+];
 
 const currencyFormatter = new Intl.NumberFormat("de-DE", {
   style: "currency",
@@ -72,7 +83,7 @@ const elements = {
 };
 
 let bookings = loadBookings();
-let categories = loadCategories();
+let categories = loadLocalCategories();
 let supabaseClient = null;
 let currentUser = null;
 let authView = "loggedOut";
@@ -212,7 +223,7 @@ function mergeCategories(categoryList) {
   return uniqueCategories;
 }
 
-function loadCategories() {
+function loadLocalCategories() {
   try {
     const stored = localStorage.getItem(CATEGORY_STORAGE_KEY);
     const storedCategories = stored ? JSON.parse(stored) : [];
@@ -228,6 +239,192 @@ function saveBookings() {
 
 function saveCategories() {
   localStorage.setItem(CATEGORY_STORAGE_KEY, JSON.stringify(categories));
+}
+
+function isCloudMode() {
+  return Boolean(supabaseClient && currentUser);
+}
+
+function mapTransactionRow(row) {
+  return {
+    id: row.id,
+    amount: Number(row.amount),
+    type: row.type,
+    category: row.category,
+    description: row.description || "",
+    date: row.date,
+    createdAt: row.created_at,
+  };
+}
+
+async function loadUserData() {
+  if (!isCloudMode()) return;
+
+  try {
+    await ensureDefaultCategories();
+    const [loadedCategories, loadedTransactions] = await Promise.all([loadCategories(), loadTransactions()]);
+
+    categories = mergeCategories(loadedCategories);
+    bookings = loadedTransactions;
+    activeDetail = null;
+    render();
+    showLocalDataNotice();
+  } catch (error) {
+    bookings = [];
+    categories = mergeCategories([]);
+    activeDetail = null;
+    render();
+    setDataActionMessage(error.message || "Cloud-Daten konnten nicht geladen werden.", true);
+  }
+}
+
+async function refreshAppData() {
+  if (isCloudMode()) {
+    await loadUserData();
+    return;
+  }
+
+  bookings = loadBookings();
+  categories = loadLocalCategories();
+  render();
+}
+
+async function loadTransactions() {
+  const { data, error } = await supabaseClient
+    .from("transactions")
+    .select("id, created_at, user_id, date, type, amount, category, description")
+    .eq("user_id", currentUser.id)
+    .order("date", { ascending: false })
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error(error.message || "Buchungen konnten nicht geladen werden.");
+  }
+
+  return (data || []).map(mapTransactionRow);
+}
+
+async function saveTransaction(transaction) {
+  if (!isCloudMode()) {
+    bookings.unshift(transaction);
+    saveBookings();
+    return transaction;
+  }
+
+  const { data, error } = await supabaseClient
+    .from("transactions")
+    .insert({
+      user_id: currentUser.id,
+      date: transaction.date,
+      type: transaction.type,
+      amount: transaction.amount,
+      category: transaction.category,
+      description: transaction.description,
+    })
+    .select("id, created_at, user_id, date, type, amount, category, description")
+    .single();
+
+  if (error) {
+    throw new Error(error.message || "Buchung konnte nicht gespeichert werden.");
+  }
+
+  const savedTransaction = mapTransactionRow(data);
+  bookings.unshift(savedTransaction);
+  return savedTransaction;
+}
+
+async function deleteTransaction(id) {
+  if (!isCloudMode()) {
+    bookings = bookings.filter((booking) => booking.id !== id);
+    saveBookings();
+    return;
+  }
+
+  const { error } = await supabaseClient.from("transactions").delete().eq("id", id).eq("user_id", currentUser.id);
+
+  if (error) {
+    throw new Error(error.message || "Buchung konnte nicht gelöscht werden.");
+  }
+
+  bookings = bookings.filter((booking) => booking.id !== id);
+}
+
+async function loadCategories() {
+  if (!isCloudMode()) {
+    return loadLocalCategories();
+  }
+
+  const { data, error } = await supabaseClient
+    .from("categories")
+    .select("id, created_at, user_id, name")
+    .eq("user_id", currentUser.id)
+    .order("name", { ascending: true });
+
+  if (error) {
+    throw new Error(error.message || "Kategorien konnten nicht geladen werden.");
+  }
+
+  return (data || []).map((category) => category.name).filter(Boolean);
+}
+
+async function saveCategory(name) {
+  if (!isCloudMode()) {
+    categories.push(name);
+    categories.sort((first, second) => first.localeCompare(second, "de"));
+    saveCategories();
+    return;
+  }
+
+  const { error } = await supabaseClient.from("categories").insert({
+    user_id: currentUser.id,
+    name,
+  });
+
+  if (error) {
+    throw new Error(error.message || "Kategorie konnte nicht gespeichert werden.");
+  }
+
+  categories.push(name);
+  categories.sort((first, second) => first.localeCompare(second, "de"));
+}
+
+async function ensureDefaultCategories() {
+  if (!isCloudMode()) return;
+
+  const { data, error } = await supabaseClient.from("categories").select("name").eq("user_id", currentUser.id);
+
+  if (error) {
+    throw new Error(error.message || "Kategorien konnten nicht geprüft werden.");
+  }
+
+  if ((data || []).length) return;
+
+  const { error: insertError } = await supabaseClient.from("categories").insert(
+    defaultCategories.map((name) => ({
+      user_id: currentUser.id,
+      name,
+    }))
+  );
+
+  if (insertError) {
+    throw new Error(insertError.message || "Standardkategorien konnten nicht erstellt werden.");
+  }
+}
+
+function showLocalDataNotice() {
+  const hasLocalBookings = loadBookings().length > 0;
+  let hasLocalCategories = false;
+
+  try {
+    const storedCategories = JSON.parse(localStorage.getItem(CATEGORY_STORAGE_KEY) || "[]");
+    hasLocalCategories = Array.isArray(storedCategories) && storedCategories.length > 0;
+  } catch {
+    hasLocalCategories = false;
+  }
+
+  if (hasLocalBookings || hasLocalCategories) {
+    setDataActionMessage("Lokale Daten gefunden. Migration in deinen Account wird später ergänzt.");
+  }
 }
 
 function initSupabase() {
@@ -246,9 +443,17 @@ function initSupabase() {
     },
   });
 
-  supabaseClient.auth.onAuthStateChange((_event, session) => {
+  supabaseClient.auth.onAuthStateChange(async (_event, session) => {
     currentUser = session?.user || null;
     authView = currentUser ? "loggedIn" : "loggedOut";
+    if (currentUser) {
+      await loadUserData();
+    } else {
+      bookings = [];
+      categories = loadLocalCategories();
+      activeDetail = null;
+      render();
+    }
     renderAuthScreen();
   });
 
@@ -273,6 +478,9 @@ async function checkAuthSession() {
 
   currentUser = data.session?.user || null;
   authView = currentUser ? "loggedIn" : "loggedOut";
+  if (currentUser) {
+    await loadUserData();
+  }
   renderAuthScreen();
 }
 
@@ -331,6 +539,7 @@ async function updateUserProfile(event) {
   if (!(await updateUserPassword())) return;
 
   updateHeaderForUser();
+  closeProfileModal();
 }
 
 async function updateUserName() {
@@ -571,6 +780,7 @@ async function signInUser(event) {
 
   currentUser = data.user;
   authView = "loggedIn";
+  await loadUserData();
   renderAuthScreen();
 }
 
@@ -622,6 +832,7 @@ async function signUpUser(event) {
   if (data.session && data.user) {
     currentUser = data.user;
     authView = "loggedIn";
+    await loadUserData();
     renderAuthScreen();
     return;
   }
@@ -663,6 +874,9 @@ async function signOutUser() {
 
   currentUser = null;
   activeDetail = null;
+  bookings = [];
+  categories = loadLocalCategories();
+  render();
   setAuthView("loggedOut");
 }
 
@@ -745,6 +959,11 @@ function importBackupFile(file) {
 
       if (!isValidBackupData(backupData)) {
         setDataActionMessage("Die ausgewählte Datei ist kein gültiges Finance-Tracker-Backup.", true);
+        return;
+      }
+
+      if (isCloudMode()) {
+        setDataActionMessage("Import in Cloud-Daten wird in einem separaten Schritt ergänzt.", true);
         return;
       }
 
@@ -1317,7 +1536,7 @@ function closeCategoryDialog() {
   setCategoryMessage("");
 }
 
-function handleCategorySubmit(event) {
+async function handleCategorySubmit(event) {
   event.preventDefault();
 
   const categoryName = normalizeCategoryName(elements.newCategory.value);
@@ -1333,16 +1552,20 @@ function handleCategorySubmit(event) {
     return;
   }
 
-  categories.push(categoryName);
-  categories.sort((first, second) => first.localeCompare(second, "de"));
-  saveCategories();
+  try {
+    await saveCategory(categoryName);
+  } catch (error) {
+    setCategoryMessage(error.message || "Kategorie konnte nicht gespeichert werden.", true);
+    return;
+  }
+
   renderCategoryOptions(categoryName);
   closeCategoryDialog();
   setMessage("Kategorie hinzugefügt.");
   render();
 }
 
-function handleSubmit(event) {
+async function handleSubmit(event) {
   event.preventDefault();
 
   const type = getSelectedType();
@@ -1358,7 +1581,7 @@ function handleSubmit(event) {
     return;
   }
 
-  bookings.unshift({
+  const transaction = {
     id: crypto.randomUUID(),
     amount: signedAmount(amount, type),
     type,
@@ -1366,9 +1589,15 @@ function handleSubmit(event) {
     description,
     date,
     createdAt: new Date().toISOString(),
-  });
+  };
 
-  saveBookings();
+  try {
+    await saveTransaction(transaction);
+  } catch (error) {
+    setMessage(error.message || "Buchung konnte nicht gespeichert werden.", true);
+    return;
+  }
+
   resetForm();
   setMessage("Buchung gespeichert.");
   render();
@@ -1664,9 +1893,14 @@ function render() {
   renderEntryPreview();
 }
 
-function deleteBooking(id) {
-  bookings = bookings.filter((booking) => booking.id !== id);
-  saveBookings();
+async function deleteBooking(id) {
+  try {
+    await deleteTransaction(id);
+  } catch (error) {
+    setDataActionMessage(error.message || "Buchung konnte nicht gelöscht werden.", true);
+    return;
+  }
+
   render();
 }
 

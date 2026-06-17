@@ -30,7 +30,6 @@ const elements = {
   profileForm: document.querySelector("#profile-form"),
   profileName: document.querySelector("#profile-name"),
   profileEmail: document.querySelector("#profile-email"),
-  profileCurrentPassword: document.querySelector("#profile-current-password"),
   profileNewPassword: document.querySelector("#profile-new-password"),
   profileNewPasswordConfirm: document.querySelector("#profile-new-password-confirm"),
   profileMessage: document.querySelector("#profile-message"),
@@ -270,6 +269,7 @@ async function loadUserData() {
     render();
     showLocalDataNotice();
   } catch (error) {
+    console.error("Cloud data loading failed:", error);
     bookings = [];
     categories = mergeCategories([]);
     activeDetail = null;
@@ -427,8 +427,34 @@ function showLocalDataNotice() {
   }
 }
 
-function initSupabase() {
-  if (!window.supabase?.createClient) {
+function loadSupabaseLibrary() {
+  if (window.supabase?.createClient) return Promise.resolve(true);
+
+  return new Promise((resolve) => {
+    const script = document.createElement("script");
+    const timeout = window.setTimeout(() => {
+      script.remove();
+      resolve(false);
+    }, 8000);
+
+    script.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2";
+    script.async = true;
+    script.addEventListener("load", () => {
+      window.clearTimeout(timeout);
+      resolve(Boolean(window.supabase?.createClient));
+    });
+    script.addEventListener("error", () => {
+      window.clearTimeout(timeout);
+      resolve(false);
+    });
+    document.head.append(script);
+  });
+}
+
+async function initSupabase() {
+  const supabaseLoaded = await loadSupabaseLibrary();
+
+  if (!supabaseLoaded) {
     authView = "loggedOut";
     renderAuthScreen();
     setAuthMessage("Supabase konnte nicht geladen werden. Bitte prüfe deine Internetverbindung.", true);
@@ -447,6 +473,7 @@ function initSupabase() {
     currentUser = session?.user || null;
     authView = currentUser ? "loggedIn" : "loggedOut";
     if (currentUser) {
+      renderAuthScreen();
       await loadUserData();
     } else {
       bookings = [];
@@ -466,9 +493,24 @@ async function checkAuthSession() {
     return;
   }
 
-  const { data, error } = await supabaseClient.auth.getSession();
+  const sessionResult = await Promise.race([
+    supabaseClient.auth.getSession(),
+    new Promise((resolve) => {
+      window.setTimeout(() => resolve({ data: { session: null }, error: null, timedOut: true }), 8000);
+    }),
+  ]);
+  const { data, error, timedOut } = sessionResult;
+
+  if (timedOut) {
+    currentUser = null;
+    authView = "loggedOut";
+    renderAuthScreen();
+    setAuthMessage("Sessionprüfung dauert zu lange. Bitte versuche es erneut oder lade die Seite neu.", true);
+    return;
+  }
 
   if (error) {
+    console.error("Supabase session check failed:", error);
     currentUser = null;
     authView = "loggedOut";
     renderAuthScreen();
@@ -479,6 +521,7 @@ async function checkAuthSession() {
   currentUser = data.session?.user || null;
   authView = currentUser ? "loggedIn" : "loggedOut";
   if (currentUser) {
+    renderAuthScreen();
     await loadUserData();
   }
   renderAuthScreen();
@@ -517,7 +560,6 @@ function setProfileMessage(text, isError = false) {
 function openProfileModal() {
   elements.profileName.value = getUserDisplayName();
   elements.profileEmail.value = currentUser?.email || "";
-  elements.profileCurrentPassword.value = "";
   elements.profileNewPassword.value = "";
   elements.profileNewPasswordConfirm.value = "";
   setProfileMessage("");
@@ -603,27 +645,22 @@ async function updateUserEmail() {
 }
 
 function isPasswordChangeRequested() {
-  return Boolean(
-    elements.profileCurrentPassword.value ||
-      elements.profileNewPassword.value ||
-      elements.profileNewPasswordConfirm.value
-  );
+  return Boolean(elements.profileNewPassword.value || elements.profileNewPasswordConfirm.value);
 }
 
 async function updateUserPassword() {
-  const currentPassword = String(elements.profileCurrentPassword.value || "");
   const newPassword = String(elements.profileNewPassword.value || "");
   const newPasswordConfirm = String(elements.profileNewPasswordConfirm.value || "");
 
   if (!isPasswordChangeRequested()) return true;
 
-  if (!currentPassword) {
-    setProfileMessage("Bitte gib dein aktuelles Passwort ein.", true);
+  if (!newPassword) {
+    setProfileMessage("Bitte gib ein neues Passwort ein.", true);
     return false;
   }
 
-  if (!newPassword) {
-    setProfileMessage("Bitte gib ein neues Passwort ein.", true);
+  if (newPassword.length < 6) {
+    setProfileMessage("Das neue Passwort muss mindestens 6 Zeichen lang sein.", true);
     return false;
   }
 
@@ -640,7 +677,6 @@ async function updateUserPassword() {
   }
 
   currentUser = data.user || currentUser;
-  elements.profileCurrentPassword.value = "";
   elements.profileNewPassword.value = "";
   elements.profileNewPasswordConfirm.value = "";
   setProfileMessage("Passwort aktualisiert.");
@@ -1955,12 +1991,56 @@ elements.detailTableBody.addEventListener("click", (event) => {
   deleteBooking(deleteButton.dataset.id);
 });
 
-setDateInputValue(elements.date, todayIsoDate());
-setDateInputValue(elements.filters.from, firstDayOfCurrentMonthIsoDate());
-setDateInputValue(elements.filters.to, todayIsoDate());
-initDatePickers();
-saveCategories();
-render();
-if (initSupabase()) {
-  checkAuthSession();
+function showStartupFallback(error) {
+  console.error("App startup failed:", error);
+  elements.appShell.classList.add("hidden");
+  elements.authShell.classList.remove("hidden");
+  elements.authShell.innerHTML = `
+    <div class="auth-card">
+      <p class="eyebrow">Finance Tracker</p>
+      <h1>App konnte nicht geladen werden.</h1>
+      <p class="auth-message error">Bitte Seite neu laden.</p>
+    </div>
+  `;
 }
+
+function handleGlobalStartupError(error) {
+  const authIsEmpty = !elements.authShell.textContent.trim();
+  const appIsHidden = elements.appShell.classList.contains("hidden");
+
+  console.error("Unhandled app error:", error);
+
+  if (authIsEmpty && appIsHidden) {
+    showStartupFallback(error);
+  }
+}
+
+async function initializeApp() {
+  try {
+    setDateInputValue(elements.date, todayIsoDate());
+    setDateInputValue(elements.filters.from, firstDayOfCurrentMonthIsoDate());
+    setDateInputValue(elements.filters.to, todayIsoDate());
+    initDatePickers();
+    saveCategories();
+    render();
+
+    authView = "loggedOut";
+    renderAuthScreen();
+
+    if (await initSupabase()) {
+      await checkAuthSession();
+    }
+  } catch (error) {
+    showStartupFallback(error);
+  }
+}
+
+window.addEventListener("error", (event) => {
+  handleGlobalStartupError(event.error || event.message);
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  handleGlobalStartupError(event.reason);
+});
+
+initializeApp();

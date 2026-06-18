@@ -1,5 +1,14 @@
 const STORAGE_KEY = "finance-tracker-mvp-bookings";
 const CATEGORY_STORAGE_KEY = "finance-tracker-mvp-categories";
+const APP_VERSION = "2026.06.18-auth-stability";
+const AUTH_SESSION_TIMEOUT_MS = 10000;
+const AUTH_ACTION_TIMEOUT_MS = 15000;
+const AUTH_STATES = {
+  INITIALIZING: "initializing",
+  LOGGED_OUT: "loggedOut",
+  LOGGED_IN: "loggedIn",
+  ERROR: "authError",
+};
 const SUPABASE_URL = "https://zrvdnnwdbihzdurpryce.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpydmRubndkYmloemR1cnByeWNlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE1NDA3MTQsImV4cCI6MjA5NzExNjcxNH0.QGQB1F-0vZHjvftHwIBQKn9MnmE-aNoZjF5ws6wCaDY";
 const defaultCategories = [
@@ -85,10 +94,13 @@ let bookings = loadBookings();
 let categories = loadLocalCategories();
 let supabaseClient = null;
 let currentUser = null;
+let authStatus = AUTH_STATES.INITIALIZING;
 let authView = "loggedOut";
 let authSessionCheckId = 0;
 let authSessionTimeoutId = null;
-let isSigningOut = false;
+let authSessionCancel = null;
+let userDataLoadPromise = null;
+let loadedUserId = null;
 let activeAnalysisType = "expense";
 let activeDatePicker = null;
 let activeDetail = null;
@@ -262,20 +274,28 @@ function mapTransactionRow(row) {
 async function loadUserData() {
   if (!isCloudMode()) return;
 
+  console.log("data: loadUserData start");
+
   try {
-    await ensureDefaultCategories();
-    const [loadedCategories, loadedTransactions] = await Promise.all([loadCategories(), loadTransactions()]);
+    const userId = currentUser.id;
+    await withTimeout(ensureDefaultCategories(), AUTH_ACTION_TIMEOUT_MS, "Cloud-Daten laden");
+    const [loadedCategories, loadedTransactions] = await withTimeout(
+      Promise.all([loadCategories(), loadTransactions()]),
+      AUTH_ACTION_TIMEOUT_MS,
+      "Cloud-Daten laden"
+    );
+
+    if (!currentUser || currentUser.id !== userId) return;
 
     categories = mergeCategories(loadedCategories);
     bookings = loadedTransactions;
     activeDetail = null;
+    loadedUserId = userId;
     render();
     showLocalDataNotice();
+    console.log("data: loadUserData success");
   } catch (error) {
-    console.error("Cloud data loading failed:", error);
-    bookings = [];
-    categories = mergeCategories([]);
-    activeDetail = null;
+    console.error("data: loadUserData error", error);
     render();
     setDataActionMessage(error.message || "Cloud-Daten konnten nicht geladen werden.", true);
   }
@@ -431,17 +451,46 @@ function showLocalDataNotice() {
 }
 
 function clearAuthSessionTimeout() {
-  if (!authSessionTimeoutId) return;
+  if (authSessionTimeoutId !== null) {
+    window.clearTimeout(authSessionTimeoutId);
+    authSessionTimeoutId = null;
+  }
 
-  window.clearTimeout(authSessionTimeoutId);
-  authSessionTimeoutId = null;
+  if (authSessionCancel) {
+    const cancel = authSessionCancel;
+    authSessionCancel = null;
+    cancel();
+  }
+
   console.log("auth: session timeout cleared");
 }
 
+function withTimeout(promise, timeoutMs, actionLabel) {
+  let timeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = window.setTimeout(() => {
+      reject(new Error(`${actionLabel} dauert zu lange. Bitte prüfe deine Verbindung und versuche es erneut.`));
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    window.clearTimeout(timeoutId);
+  });
+}
+
+function setAuthState(status, user = null) {
+  authStatus = status;
+  currentUser = user;
+  renderAuthScreen();
+}
+
 function resetAppStateForLoggedOut() {
+  authStatus = AUTH_STATES.LOGGED_OUT;
   currentUser = null;
   authView = "loggedOut";
   activeDetail = null;
+  loadedUserId = null;
+  userDataLoadPromise = null;
   bookings = [];
   categories = loadLocalCategories();
   render();
@@ -452,15 +501,44 @@ function renderLoggedOut() {
   renderAuthScreen();
 }
 
-async function applyAuthenticatedSession(user, source) {
+async function loadAuthenticatedUserData(user, source) {
+  if (!user || authStatus !== AUTH_STATES.LOGGED_IN || currentUser?.id !== user.id) return;
+  if (loadedUserId === user.id) return;
+  if (userDataLoadPromise) return userDataLoadPromise;
+
+  console.log(`data: authenticated load scheduled via ${source}`);
+  userDataLoadPromise = loadUserData().finally(() => {
+    userDataLoadPromise = null;
+  });
+  return userDataLoadPromise;
+}
+
+function applyAuthenticatedSession(user, source, options = {}) {
+  if (!user) return;
+
   clearAuthSessionTimeout();
-  isSigningOut = false;
-  currentUser = user;
+  const userChanged = currentUser?.id !== user.id;
+  authStatus = AUTH_STATES.LOGGED_IN;
   authView = "loggedIn";
+  currentUser = user;
+
+  if (userChanged) {
+    bookings = [];
+    categories = mergeCategories([]);
+    activeDetail = null;
+    loadedUserId = null;
+    userDataLoadPromise = null;
+    render();
+  }
+
   console.log(`auth: signed in via ${source}`);
   renderAuthScreen();
-  await loadUserData();
-  renderAuthScreen();
+
+  if (options.loadData !== false) {
+    window.setTimeout(() => {
+      void loadAuthenticatedUserData(user, source);
+    }, 0);
+  }
 }
 
 function loadSupabaseLibrary() {
@@ -488,14 +566,16 @@ function loadSupabaseLibrary() {
 }
 
 async function initSupabase() {
+  if (supabaseClient) return true;
+
   console.log("auth: supabase init start");
   const supabaseLoaded = await loadSupabaseLibrary();
 
   if (!supabaseLoaded) {
     console.error("auth: supabase library failed to load");
+    authStatus = AUTH_STATES.ERROR;
     authView = "loggedOut";
     renderAuthScreen();
-    setAuthMessage("Supabase konnte nicht geladen werden. Bitte prüfe deine Internetverbindung.", true);
     return false;
   }
 
@@ -509,22 +589,33 @@ async function initSupabase() {
 
   console.log("auth: supabase client initialized");
 
-  supabaseClient.auth.onAuthStateChange(async (event, session) => {
+  supabaseClient.auth.onAuthStateChange((event, session) => {
     console.log(`auth: state change ${event}`);
 
     if (event === "SIGNED_OUT") {
       clearAuthSessionTimeout();
-      renderLoggedOut();
+      window.setTimeout(() => {
+        if (authStatus !== AUTH_STATES.LOGGED_OUT || currentUser) {
+          renderLoggedOut();
+        }
+      }, 0);
       return;
     }
 
-    if (session?.user && (event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "INITIAL_SESSION")) {
-      await applyAuthenticatedSession(session.user, event);
+    if (session?.user && (event === "SIGNED_IN" || event === "INITIAL_SESSION")) {
+      applyAuthenticatedSession(session.user, event);
       return;
     }
 
-    if (!session?.user && !isSigningOut) {
-      renderLoggedOut();
+    if (session?.user && (event === "TOKEN_REFRESHED" || event === "USER_UPDATED")) {
+      currentUser = session.user;
+      authStatus = AUTH_STATES.LOGGED_IN;
+      renderAuthScreen();
+      return;
+    }
+
+    if (!session?.user && event === "INITIAL_SESSION" && authStatus !== AUTH_STATES.INITIALIZING) {
+      window.setTimeout(renderLoggedOut, 0);
     }
   });
 
@@ -543,18 +634,31 @@ async function checkAuthSession() {
   console.log(`auth: getSession start #${checkId}`);
 
   const timeoutPromise = new Promise((resolve) => {
+    authSessionCancel = () => {
+      resolve({ data: { session: null }, error: null, cancelled: true, checkId });
+    };
     authSessionTimeoutId = window.setTimeout(() => {
+      authSessionTimeoutId = null;
+      authSessionCancel = null;
       console.log(`auth: getSession timeout #${checkId}`);
       resolve({ data: { session: null }, error: null, timedOut: true, checkId });
-    }, 8000);
+    }, AUTH_SESSION_TIMEOUT_MS);
     console.log(`auth: session timeout started #${checkId}`);
   });
 
   const sessionResult = await Promise.race([
-    supabaseClient.auth.getSession().then((result) => ({ ...result, checkId })),
+    supabaseClient.auth
+      .getSession()
+      .then((result) => ({ ...result, checkId }))
+      .catch((error) => ({ data: { session: null }, error, checkId })),
     timeoutPromise,
   ]);
-  const { data, error, timedOut } = sessionResult;
+  const { data, error, timedOut, cancelled } = sessionResult;
+
+  if (cancelled) {
+    console.log(`auth: getSession cancelled #${checkId}`);
+    return;
+  }
 
   if (checkId !== authSessionCheckId) {
     console.log(`auth: stale getSession result ignored #${checkId}`);
@@ -569,29 +673,30 @@ async function checkAuthSession() {
       return;
     }
 
+    authStatus = AUTH_STATES.ERROR;
     currentUser = null;
     authView = "loggedOut";
     renderAuthScreen();
-    setAuthMessage("Sessionprüfung dauert zu lange. Bitte versuche es erneut oder lade die Seite neu.", true);
     return;
   }
 
   if (error) {
-    console.error("Supabase session check failed:", error);
+    console.error("auth: getSession error", error);
+    authStatus = AUTH_STATES.ERROR;
     currentUser = null;
     authView = "loggedOut";
     renderAuthScreen();
-    setAuthMessage(error.message || "Session konnte nicht geprüft werden.", true);
     return;
   }
 
   console.log(`auth: getSession success #${checkId}`, { hasSession: Boolean(data.session?.user) });
 
   if (data.session?.user) {
-    await applyAuthenticatedSession(data.session.user, "getSession");
+    applyAuthenticatedSession(data.session.user, "getSession");
     return;
   }
 
+  console.log(`auth: getSession no session #${checkId}`);
   renderLoggedOut();
 }
 
@@ -600,8 +705,23 @@ function getUserDisplayName(user = currentUser) {
 }
 
 function setAuthView(view) {
+  authStatus = AUTH_STATES.LOGGED_OUT;
   authView = view;
   renderAuthScreen();
+}
+
+async function retryAuthInitialization() {
+  console.log("auth: retry start");
+  setAuthState(AUTH_STATES.INITIALIZING);
+
+  try {
+    if ((await initSupabase()) && supabaseClient) {
+      await checkAuthSession();
+    }
+  } catch (error) {
+    console.error("auth: retry error", error);
+    setAuthState(AUTH_STATES.ERROR);
+  }
 }
 
 function setAuthMessage(text, isError = false) {
@@ -649,23 +769,62 @@ function setProfileLoading(isLoading) {
   submitButton.textContent = isLoading ? "Speichert..." : "Änderungen speichern";
 }
 
+function validateProfileChanges() {
+  const name = normalizeCategoryName(elements.profileName.value);
+  const email = String(elements.profileEmail.value || "").trim();
+  const newPassword = String(elements.profileNewPassword.value || "");
+  const newPasswordConfirm = String(elements.profileNewPasswordConfirm.value || "");
+
+  if (!name) return "Bitte gib einen Namen ein.";
+  if (!email) return "Bitte gib deine E-Mail-Adresse ein.";
+  if (!isLikelyEmail(email)) return "Bitte gib eine gültige E-Mail-Adresse ein.";
+
+  if (newPassword || newPasswordConfirm) {
+    if (!newPassword) return "Bitte gib ein neues Passwort ein.";
+    if (newPassword.length < 6) return "Das neue Passwort muss mindestens 6 Zeichen lang sein.";
+    if (newPassword !== newPasswordConfirm) {
+      return "Das neue Passwort und die Bestätigung stimmen nicht überein.";
+    }
+  }
+
+  return "";
+}
+
 async function updateUserProfile(event) {
   event.preventDefault();
+  console.log("profile: save clicked");
+  const validationError = validateProfileChanges();
 
+  if (validationError) {
+    setProfileMessage(validationError, true);
+    return;
+  }
+
+  const emailChanged = String(elements.profileEmail.value || "").trim() !== (currentUser?.email || "");
+  const passwordChangeRequested = isPasswordChangeRequested();
   setProfileLoading(true);
+  console.log("profile: save start");
 
   try {
-    const passwordChangeRequested = isPasswordChangeRequested();
-
     if (!(await updateUserName())) return;
     if (!(await updateUserEmail())) return;
     if (!(await updateUserPassword())) return;
 
     updateHeaderForUser();
     closeProfileModal();
-    setDataActionMessage(passwordChangeRequested ? "Passwort wurde aktualisiert." : "Profil aktualisiert.");
+    const successMessage = passwordChangeRequested
+      ? "Passwort wurde aktualisiert."
+      : emailChanged
+        ? "Bitte bestätige die neue E-Mail-Adresse über den Link in deinem Postfach."
+        : "Profil aktualisiert.";
+    setDataActionMessage(successMessage);
+    console.log("profile: save success");
+  } catch (error) {
+    console.error("profile: save error", error);
+    setProfileMessage(error.message || "Profil konnte nicht aktualisiert werden.", true);
   } finally {
     setProfileLoading(false);
+    console.log("profile: save finally");
   }
 }
 
@@ -680,20 +839,26 @@ async function updateUserName() {
 
   if (name === currentName) return true;
 
-  const { data, error } = await supabaseClient.auth.updateUser({
-    data: {
-      name,
-      full_name: name,
-    },
-  });
+  console.log("profile: name update start");
+  const { data, error } = await withTimeout(
+    supabaseClient.auth.updateUser({
+      data: {
+        name,
+        full_name: name,
+      },
+    }),
+    AUTH_ACTION_TIMEOUT_MS,
+    "Name speichern"
+  );
 
   if (error) {
+    console.error("profile: name update error", error);
     setProfileMessage(error.message || "Name konnte nicht aktualisiert werden.", true);
     return false;
   }
 
   currentUser = data.user;
-  setProfileMessage("Name aktualisiert.");
+  console.log("profile: name update success");
   return true;
 }
 
@@ -721,15 +886,21 @@ async function updateUserEmail() {
 
   if (email === currentEmail) return true;
 
-  const { data, error } = await supabaseClient.auth.updateUser({ email });
+  console.log("profile: email update start");
+  const { data, error } = await withTimeout(
+    supabaseClient.auth.updateUser({ email }),
+    AUTH_ACTION_TIMEOUT_MS,
+    "E-Mail speichern"
+  );
 
   if (error) {
+    console.error("profile: email update error", error);
     setProfileMessage(error.message || "E-Mail konnte nicht aktualisiert werden.", true);
     return false;
   }
 
   currentUser = data.user || currentUser;
-  setProfileMessage("E-Mail-Änderung gestartet. Bitte prüfe ggf. deine Bestätigungs-E-Mail.");
+  console.log("profile: email update success");
   return true;
 }
 
@@ -758,9 +929,15 @@ async function updateUserPassword() {
     return false;
   }
 
-  const { data, error } = await supabaseClient.auth.updateUser({ password: newPassword });
+  console.log("profile: password update start");
+  const { data, error } = await withTimeout(
+    supabaseClient.auth.updateUser({ password: newPassword }),
+    AUTH_ACTION_TIMEOUT_MS,
+    "Passwort speichern"
+  );
 
   if (error) {
+    console.error("profile: password update error", error);
     setProfileMessage(error.message || "Passwort konnte nicht aktualisiert werden.", true);
     return false;
   }
@@ -768,21 +945,44 @@ async function updateUserPassword() {
   currentUser = data.user || currentUser;
   elements.profileNewPassword.value = "";
   elements.profileNewPasswordConfirm.value = "";
-  setProfileMessage("Passwort aktualisiert.");
+  console.log("profile: password update success");
   return true;
 }
 
 function renderAuthScreen() {
-  const isLoggedIn = authView === "loggedIn" && currentUser;
+  const isLoggedIn = authStatus === AUTH_STATES.LOGGED_IN && currentUser;
 
   elements.authShell.classList.toggle("hidden", isLoggedIn);
   elements.appShell.classList.toggle("hidden", !isLoggedIn);
 
   if (isLoggedIn) {
+    console.log("ui: render app");
     updateHeaderForUser();
     elements.authShell.innerHTML = "";
     return;
   }
+
+  if (authStatus === AUTH_STATES.INITIALIZING) {
+    console.log("ui: render auth loading");
+    renderAuthCard({
+      title: "Finance Tracker",
+      body: '<p class="auth-message">Session wird geprüft...</p>',
+      actions: "",
+    });
+    return;
+  }
+
+  if (authStatus === AUTH_STATES.ERROR) {
+    console.log("ui: render auth error");
+    renderAuthCard({
+      title: "Verbindung nicht möglich",
+      body: '<p class="auth-message error">Die Session konnte nicht geprüft werden. Bitte versuche es erneut.</p>',
+      actions: '<button class="auth-link" type="button" data-auth-retry>Erneut versuchen</button>',
+    });
+    return;
+  }
+
+  console.log("ui: render login");
 
   if (authView === "signup") {
     renderSignupForm();
@@ -882,8 +1082,21 @@ function renderResetPasswordForm() {
   elements.authShell.querySelector("#reset-password-form").addEventListener("submit", resetPassword);
 }
 
+function setAuthFormLoading(form, isLoading, loadingText) {
+  const submitButton = form.querySelector('button[type="submit"]');
+  if (!submitButton) return;
+
+  if (!submitButton.dataset.defaultText) {
+    submitButton.dataset.defaultText = submitButton.textContent;
+  }
+
+  submitButton.disabled = isLoading;
+  submitButton.textContent = isLoading ? loadingText : submitButton.dataset.defaultText;
+}
+
 async function signInUser(event) {
   event.preventDefault();
+  const form = event.currentTarget;
   const formData = new FormData(event.currentTarget);
   const email = String(formData.get("email") || "").trim();
   const password = String(formData.get("password") || "");
@@ -893,23 +1106,34 @@ async function signInUser(event) {
     return;
   }
 
-  const { data, error } = await supabaseClient.auth.signInWithPassword({
-    email,
-    password,
-  });
+  setAuthFormLoading(form, true, "Einloggen...");
 
-  if (error) {
+  try {
+    const { data, error } = await withTimeout(
+      supabaseClient.auth.signInWithPassword({ email, password }),
+      AUTH_ACTION_TIMEOUT_MS,
+      "Login"
+    );
+
+    if (error) {
+      setAuthMessage(error.message || "Login fehlgeschlagen.", true);
+      return;
+    }
+
+    if (data.user) {
+      applyAuthenticatedSession(data.user, "signIn");
+    }
+  } catch (error) {
+    console.error("auth: sign in error", error);
     setAuthMessage(error.message || "Login fehlgeschlagen.", true);
-    return;
-  }
-
-  if (data.user) {
-    await applyAuthenticatedSession(data.user, "signIn");
+  } finally {
+    setAuthFormLoading(form, false, "");
   }
 }
 
 async function signUpUser(event) {
   event.preventDefault();
+  const form = event.currentTarget;
   const formData = new FormData(event.currentTarget);
   const name = normalizeCategoryName(String(formData.get("name") || ""));
   const email = String(formData.get("email") || "").trim();
@@ -936,73 +1160,114 @@ async function signUpUser(event) {
     return;
   }
 
-  const { data, error } = await supabaseClient.auth.signUp({
-    email,
-    password,
-    options: {
-      data: {
-        name,
-        full_name: name,
-      },
-      emailRedirectTo: getAuthRedirectUrl(),
-    },
-  });
+  setAuthFormLoading(form, true, "Erstellt...");
 
-  if (error) {
+  try {
+    const { data, error } = await withTimeout(
+      supabaseClient.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            name,
+            full_name: name,
+          },
+          emailRedirectTo: getAuthRedirectUrl(),
+        },
+      }),
+      AUTH_ACTION_TIMEOUT_MS,
+      "Registrierung"
+    );
+
+    if (error) {
+      setAuthMessage(error.message || "Registrierung fehlgeschlagen.", true);
+      return;
+    }
+
+    if (data.session && data.user) {
+      applyAuthenticatedSession(data.user, "signUp");
+      return;
+    }
+
+    setAuthView("login");
+    setAuthMessage("Registrierung erstellt. Bitte prüfe deine E-Mail zur Bestätigung.");
+  } catch (error) {
+    console.error("auth: sign up error", error);
     setAuthMessage(error.message || "Registrierung fehlgeschlagen.", true);
-    return;
+  } finally {
+    setAuthFormLoading(form, false, "");
   }
-
-  if (data.session && data.user) {
-    await applyAuthenticatedSession(data.user, "signUp");
-    return;
-  }
-
-  setAuthView("login");
-  setAuthMessage("Registrierung erstellt. Bitte prüfe deine E-Mail zur Bestätigung.");
 }
 
 async function resetPassword(event) {
   event.preventDefault();
-  const email = String(new FormData(event.currentTarget).get("email") || "").trim();
+  const form = event.currentTarget;
+  const email = String(new FormData(form).get("email") || "").trim();
 
   if (!email) {
     setAuthMessage("Bitte gib deine E-Mail-Adresse ein.", true);
     return;
   }
 
-  const { error } = await supabaseClient.auth.resetPasswordForEmail(email, {
-    redirectTo: getAuthRedirectUrl(),
-  });
+  setAuthFormLoading(form, true, "Wird gesendet...");
 
-  if (error) {
+  try {
+    const { error } = await withTimeout(
+      supabaseClient.auth.resetPasswordForEmail(email, {
+        redirectTo: getAuthRedirectUrl(),
+      }),
+      AUTH_ACTION_TIMEOUT_MS,
+      "Reset-Link senden"
+    );
+
+    if (error) {
+      setAuthMessage(error.message || "Reset-Link konnte nicht gesendet werden.", true);
+      return;
+    }
+
+    setAuthMessage("Reset-Link wurde gesendet. Bitte prüfe deine E-Mails.");
+  } catch (error) {
+    console.error("auth: reset password error", error);
     setAuthMessage(error.message || "Reset-Link konnte nicht gesendet werden.", true);
-    return;
+  } finally {
+    setAuthFormLoading(form, false, "");
   }
+}
 
-  setAuthMessage("Reset-Link wurde gesendet. Bitte prüfe deine E-Mails.");
+function setLogoutLoading(isLoading) {
+  elements.logoutButton.disabled = isLoading;
+  elements.logoutButton.textContent = isLoading ? "Logout..." : "Logout";
 }
 
 async function signOutUser() {
   console.log("auth: logout clicked");
-  isSigningOut = true;
+  console.log("auth: logout start");
   authSessionCheckId += 1;
   clearAuthSessionTimeout();
+  setLogoutLoading(true);
 
-  if (supabaseClient) {
-    const { error } = await supabaseClient.auth.signOut();
+  try {
+    if (supabaseClient) {
+      const { error } = await withTimeout(
+        supabaseClient.auth.signOut({ scope: "local" }),
+        AUTH_ACTION_TIMEOUT_MS,
+        "Logout"
+      );
 
-    if (error) {
-      console.error("auth: logout failed", error);
-      isSigningOut = false;
-      setDataActionMessage(error.message || "Logout fehlgeschlagen.", true);
-      return;
+      if (error) {
+        throw error;
+      }
     }
-  }
 
-  console.log("auth: logout success");
-  isSigningOut = false;
-  renderLoggedOut();
+    renderLoggedOut();
+    console.log("auth: logout success");
+  } catch (error) {
+    console.error("auth: logout error", error);
+    setDataActionMessage(error.message || "Logout fehlgeschlagen.", true);
+  } finally {
+    setLogoutLoading(false);
+    console.log("auth: logout finally");
+  }
 }
 
 function downloadBlob(blob, filename) {
@@ -1661,6 +1926,18 @@ function closeCategoryDialog() {
   setCategoryMessage("");
 }
 
+function setFormSubmitLoading(form, isLoading, loadingText) {
+  const submitButton = form.querySelector('button[type="submit"]');
+  if (!submitButton) return;
+
+  if (!submitButton.dataset.defaultText) {
+    submitButton.dataset.defaultText = submitButton.textContent;
+  }
+
+  submitButton.disabled = isLoading;
+  submitButton.textContent = isLoading ? loadingText : submitButton.dataset.defaultText;
+}
+
 async function handleCategorySubmit(event) {
   event.preventDefault();
 
@@ -1677,11 +1954,15 @@ async function handleCategorySubmit(event) {
     return;
   }
 
+  setFormSubmitLoading(elements.categoryForm, true, "Speichert...");
+
   try {
-    await saveCategory(categoryName);
+    await withTimeout(saveCategory(categoryName), AUTH_ACTION_TIMEOUT_MS, "Kategorie speichern");
   } catch (error) {
     setCategoryMessage(error.message || "Kategorie konnte nicht gespeichert werden.", true);
     return;
+  } finally {
+    setFormSubmitLoading(elements.categoryForm, false, "");
   }
 
   renderCategoryOptions(categoryName);
@@ -1716,11 +1997,15 @@ async function handleSubmit(event) {
     createdAt: new Date().toISOString(),
   };
 
+  setFormSubmitLoading(elements.form, true, "Speichert...");
+
   try {
-    await saveTransaction(transaction);
+    await withTimeout(saveTransaction(transaction), AUTH_ACTION_TIMEOUT_MS, "Buchung speichern");
   } catch (error) {
     setMessage(error.message || "Buchung konnte nicht gespeichert werden.", true);
     return;
+  } finally {
+    setFormSubmitLoading(elements.form, false, "");
   }
 
   resetForm();
@@ -2020,7 +2305,7 @@ function render() {
 
 async function deleteBooking(id) {
   try {
-    await deleteTransaction(id);
+    await withTimeout(deleteTransaction(id), AUTH_ACTION_TIMEOUT_MS, "Buchung löschen");
   } catch (error) {
     setDataActionMessage(error.message || "Buchung konnte nicht gelöscht werden.", true);
     return;
@@ -2045,6 +2330,13 @@ elements.tabs.forEach((tab) => {
 
 elements.authShell.addEventListener("click", (event) => {
   if (!(event.target instanceof Element)) return;
+  const retryButton = event.target.closest("[data-auth-retry]");
+
+  if (retryButton) {
+    void retryAuthInitialization();
+    return;
+  }
+
   const viewButton = event.target.closest("[data-auth-view]");
   if (!viewButton) return;
   setAuthView(viewButton.dataset.authView);
@@ -2106,7 +2398,8 @@ function handleGlobalStartupError(error) {
 
 async function initializeApp() {
   try {
-    console.log("auth: init start");
+    console.log(`Finance Tracker version: ${APP_VERSION}`);
+    console.log("app: init start");
     setDateInputValue(elements.date, todayIsoDate());
     setDateInputValue(elements.filters.from, firstDayOfCurrentMonthIsoDate());
     setDateInputValue(elements.filters.to, todayIsoDate());
@@ -2114,6 +2407,7 @@ async function initializeApp() {
     saveCategories();
     render();
 
+    authStatus = AUTH_STATES.INITIALIZING;
     authView = "loggedOut";
     renderAuthScreen();
 

@@ -1617,7 +1617,11 @@ function populateSelect(select, options, placeholder) {
 }
 
 function renderCategoryOptions(selectedCategory = "") {
-  populateSelect(elements.category, categories, { value: "", label: "Kategorie wählen" });
+  const sortedCategories = [...categories].sort((first, second) =>
+    first.localeCompare(second, "de", { sensitivity: "base" })
+  );
+
+  populateSelect(elements.category, sortedCategories, { value: "", label: "Kategorie wählen" });
 
   if (selectedCategory) {
     elements.category.value = selectedCategory;

@@ -1752,20 +1752,28 @@ tbody tr:hover {
   html,
   body {
     width: 100%;
+    min-width: 0;
     max-width: 100%;
     overflow-x: hidden;
     overflow-x: clip;
     overscroll-behavior-x: none;
   }
 
-  body {
+  body,
+  .app-shell {
     touch-action: pan-y;
   }
 
-  .auth-shell,
   .app-shell,
+  .app-shell > *,
+  .app-shell section,
+  .app-shell article,
+  .app-shell form,
+  .app-shell nav,
+  .app-shell aside,
   .app-header,
   .header-actions,
+  .user-menu,
   .top-toolbar,
   .tab-panel,
   .content-grid,
@@ -1774,19 +1782,35 @@ tbody tr:hover {
   .insights-grid,
   .card,
   .data-actions,
-  .data-action-buttons {
+  .data-action-buttons,
+  .donut-layout,
+  .donut-visual,
+  .donut-legend,
+  .detail-content,
+  .detail-table-wrap {
+    width: 100%;
     max-width: 100%;
     min-width: 0;
     box-sizing: border-box;
   }
 
   .app-shell {
-    width: calc(100% - 20px);
-    padding: 22px 0 40px;
+    width: 100%;
+    margin: 0;
+    padding: 22px 12px 40px;
     max-width: 100%;
     min-width: 0;
     overflow-x: hidden;
     overflow-x: clip;
+  }
+
+  .tab-panel,
+  .tab-panel.active,
+  .content-grid,
+  .filters,
+  .summary-grid,
+  .insights-grid {
+    overflow-x: hidden;
   }
 
   .app-header {
@@ -1831,6 +1855,8 @@ tbody tr:hover {
   .data-actions,
   .data-action-buttons {
     width: 100%;
+    max-width: 100%;
+    min-width: 0;
   }
 
   .tabs {
@@ -1854,6 +1880,9 @@ tbody tr:hover {
   }
 
   .data-action-button {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     min-height: 44px;
     padding: 9px 10px;
     white-space: normal;
@@ -1882,9 +1911,14 @@ tbody tr:hover {
   .entry-card,
   .filters-card,
   .hint-card,
+  .metric-card,
   .donut-card,
   .expense-detail-card {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     padding: 16px;
+    overflow-x: hidden;
   }
 
   .card-header {
@@ -1921,7 +1955,19 @@ tbody tr:hover {
     min-width: 0;
   }
 
+  .segmented-control {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .segmented-control label,
+  .segmented-control span,
+  .analysis-mode-button {
+    min-width: 0;
+    max-width: 100%;
+  }
+
   .category-input-group {
+    width: 100%;
     flex-wrap: nowrap;
   }
 
@@ -1937,7 +1983,9 @@ tbody tr:hover {
   }
 
   .form-actions {
+    max-width: 100%;
     gap: 10px;
+    flex-wrap: wrap;
   }
 
   .primary-button,
@@ -1968,17 +2016,29 @@ tbody tr:hover {
 
   .donut-visual {
     width: min(100%, 232px);
+    max-width: 232px;
+    overflow: hidden;
+  }
+
+  .donut-svg {
+    display: block;
+    max-width: 100%;
     overflow: hidden;
   }
 
   .donut-legend {
     gap: 8px;
+    overflow-x: hidden;
   }
 
   .donut-legend-item {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     grid-template-columns: 12px minmax(0, 1fr) auto;
     min-height: 44px;
     padding: 9px 10px;
+    overflow: hidden;
   }
 
   .legend-label,
@@ -2162,12 +2222,18 @@ tbody tr:hover {
     padding: 14px;
     overflow-x: hidden;
   }
+
+  .auth-card {
+    width: min(400px, 100%);
+    max-width: 100%;
+    padding: 28px;
+  }
 }
 
 @media (max-width: 480px) {
   .app-shell {
-    width: calc(100% - 12px);
-    padding: 16px 0 32px;
+    width: 100%;
+    padding: 16px 10px 32px;
   }
 
   .app-header h1 {
@@ -2242,6 +2308,7 @@ tbody tr:hover {
   .entry-card,
   .filters-card,
   .hint-card,
+  .metric-card,
   .expense-detail-card {
     padding: 14px;
   }
@@ -2254,6 +2321,21 @@ tbody tr:hover {
     width: calc(100% - 12px);
     max-width: calc(100% - 12px);
     padding: 12px;
+  }
+
+  .auth-shell {
+    padding: 20px 12px;
+  }
+
+  .auth-card {
+    width: 100%;
+    padding: 22px 18px;
+    border-radius: 22px;
+  }
+
+  .auth-card h1 {
+    margin-bottom: 20px;
+    font-size: 30px;
   }
 }
 

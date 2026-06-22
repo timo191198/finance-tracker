@@ -1088,6 +1088,11 @@ th {
   padding: 28px;
 }
 
+.mobile-detail-backdrop,
+.mobile-detail-close {
+  display: none;
+}
+
 .detail-placeholder {
   display: grid;
   min-height: 310px;
@@ -1823,6 +1828,181 @@ tbody tr:hover {
   .floating-blob {
     opacity: 0.56;
   }
+
+  body:has(.expense-detail-card.mobile-open) {
+    overflow: hidden;
+  }
+
+  .insights-grid {
+    display: block;
+  }
+
+  .donut-card {
+    min-height: 0;
+  }
+
+  .donut-layout {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .donut-visual {
+    width: min(100%, 250px);
+  }
+
+  .donut-legend {
+    gap: 8px;
+  }
+
+  .donut-legend-item {
+    grid-template-columns: 12px minmax(0, 1fr) auto;
+    min-height: 48px;
+  }
+
+  .expense-detail-card {
+    display: none;
+  }
+
+  .mobile-detail-backdrop.visible {
+    position: fixed;
+    z-index: 110;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    padding: 0;
+    background: rgba(2, 5, 10, 0.72);
+    cursor: default;
+    backdrop-filter: blur(10px);
+  }
+
+  .expense-detail-card.mobile-open {
+    position: fixed;
+    z-index: 111;
+    inset: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom));
+    display: flex;
+    min-height: 0;
+    max-height: none;
+    padding: 20px;
+    overflow: hidden;
+    flex-direction: column;
+    border-radius: 22px;
+  }
+
+  .detail-card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .expense-detail-card.mobile-open .detail-card-header {
+    flex: 0 0 auto;
+    margin-bottom: 16px;
+    padding-right: 2px;
+  }
+
+  .mobile-detail-close {
+    display: grid;
+    flex: 0 0 44px;
+    width: 44px;
+    height: 44px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0;
+    place-items: center;
+    background: rgba(145, 164, 190, 0.1);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 27px;
+    line-height: 1;
+  }
+
+  .mobile-detail-close:hover,
+  .mobile-detail-close:focus-visible {
+    background: rgba(145, 164, 190, 0.17);
+    outline: none;
+  }
+
+  .expense-detail-card.mobile-open .detail-placeholder {
+    display: none;
+  }
+
+  .expense-detail-card.mobile-open .detail-content {
+    display: flex;
+    min-height: 0;
+    overflow: hidden;
+    flex: 1 1 auto;
+    flex-direction: column;
+  }
+
+  .expense-detail-card.mobile-open .detail-summary {
+    flex: 0 0 auto;
+    margin-bottom: 14px;
+  }
+
+  .expense-detail-card.mobile-open .detail-table-wrap {
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    flex: 1 1 auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .expense-detail-card.mobile-open .detail-table-wrap table,
+  .expense-detail-card.mobile-open .detail-table-wrap tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .expense-detail-card.mobile-open .detail-table-wrap thead {
+    display: none;
+  }
+
+  .expense-detail-card.mobile-open .detail-table-wrap tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 7px 12px;
+    padding: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .expense-detail-card.mobile-open .detail-table-wrap tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .expense-detail-card.mobile-open .detail-table-wrap td {
+    border: 0;
+    padding: 0;
+  }
+
+  .expense-detail-card.mobile-open .detail-table-wrap td:nth-child(1) {
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .expense-detail-card.mobile-open .detail-table-wrap td:nth-child(2) {
+    grid-column: 1;
+    overflow-wrap: anywhere;
+  }
+
+  .expense-detail-card.mobile-open .detail-table-wrap td:nth-child(3) {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: center;
+  }
+
+  .expense-detail-card.mobile-open .detail-table-wrap td:nth-child(4) {
+    grid-column: 2;
+    grid-row: 2;
+    align-self: center;
+  }
+
+  .expense-detail-card.mobile-open .delete-button {
+    min-height: 40px;
+  }
 }
 
 @media (max-width: 480px) {
@@ -1860,6 +2040,42 @@ tbody tr:hover {
 
   .data-action-button:last-of-type {
     grid-column: auto;
+  }
+
+  .donut-card {
+    padding: 20px;
+  }
+
+  .analysis-card-header {
+    gap: 14px;
+  }
+
+  .analysis-switch {
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .donut-visual {
+    width: min(100%, 225px);
+  }
+
+  .expense-detail-card.mobile-open {
+    inset: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom));
+    padding: 17px;
+    border-radius: 20px;
+  }
+
+  .expense-detail-card.mobile-open .detail-summary {
+    grid-template-columns: 1fr;
+    gap: 9px;
+  }
+
+  .expense-detail-card.mobile-open .detail-summary div {
+    padding: 12px 14px;
+  }
+
+  .expense-detail-card.mobile-open .detail-summary strong {
+    font-size: 22px;
   }
 }
 

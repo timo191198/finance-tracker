@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Finance Tracker MVP</title>
-    <link rel="stylesheet" href="styles.css?v=20260621-floating-reset">
+    <link rel="stylesheet" href="styles.css?v=20260622-mobile-dashboard">
   </head>
   <body>
     <div class="floating-bg" aria-hidden="true">
@@ -171,10 +171,14 @@
             <p class="empty-state" id="expense-empty-state">Keine Ausgaben im gewählten Zeitraum.</p>
           </article>
 
-          <article class="card expense-detail-card">
-            <div class="card-header">
-              <h2 id="analysis-detail-title">Ausgaben-Details</h2>
-              <p id="expense-detail-subtitle">Wähle eine Kategorie im Diagramm aus, um die einzelnen Buchungen zu sehen.</p>
+          <button class="mobile-detail-backdrop" type="button" aria-label="Detailansicht schließen"></button>
+          <article class="card expense-detail-card" aria-labelledby="analysis-detail-title">
+            <div class="card-header detail-card-header">
+              <div>
+                <h2 id="analysis-detail-title">Ausgaben-Details</h2>
+                <p id="expense-detail-subtitle">Wähle eine Kategorie im Diagramm aus, um die einzelnen Buchungen zu sehen.</p>
+              </div>
+              <button class="mobile-detail-close" type="button" aria-label="Detailansicht schließen" title="Schließen">&times;</button>
             </div>
             <div class="detail-placeholder" id="expense-detail-placeholder">
               Wähle eine Kategorie im Diagramm aus, um die einzelnen Buchungen zu sehen.
@@ -270,6 +274,6 @@
       </form>
     </dialog>
 
-    <script src="app.js?v=20260618-auth-stability"></script>
+    <script src="app.js?v=20260622-mobile-dashboard"></script>
   </body>
 </html>

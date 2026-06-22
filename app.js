@@ -83,6 +83,9 @@ const elements = {
   expenseEmptyState: document.querySelector("#expense-empty-state"),
   detailTitle: document.querySelector("#analysis-detail-title"),
   detailSubtitle: document.querySelector("#expense-detail-subtitle"),
+  detailCard: document.querySelector(".expense-detail-card"),
+  mobileDetailBackdrop: document.querySelector(".mobile-detail-backdrop"),
+  mobileDetailClose: document.querySelector(".mobile-detail-close"),
   detailPlaceholder: document.querySelector("#expense-detail-placeholder"),
   detailContent: document.querySelector("#expense-detail-content"),
   detailTotal: document.querySelector("#detail-total"),
@@ -2260,6 +2263,19 @@ function getDetailBookings(type, category) {
 
 function renderCategoryDetail() {
   const typeLabel = displayAnalysisType(activeAnalysisType);
+  const hasActiveDetail = Boolean(activeDetail);
+  const isMobileDashboard = window.matchMedia("(max-width: 768px)").matches;
+
+  elements.detailCard.classList.toggle("mobile-open", hasActiveDetail);
+  elements.mobileDetailBackdrop.classList.toggle("visible", hasActiveDetail);
+
+  if (hasActiveDetail && isMobileDashboard) {
+    elements.detailCard.setAttribute("role", "dialog");
+    elements.detailCard.setAttribute("aria-modal", "true");
+  } else {
+    elements.detailCard.removeAttribute("role");
+    elements.detailCard.removeAttribute("aria-modal");
+  }
 
   if (!activeDetail) {
     elements.detailSubtitle.textContent = "Wähle eine Kategorie aus, um Details zu sehen.";
@@ -2285,6 +2301,15 @@ function renderCategoryDetail() {
 
 function openCategoryDetail(type, category) {
   activeDetail = { type, category };
+  renderCategoryDetail();
+
+  if (window.matchMedia("(max-width: 768px)").matches) {
+    window.requestAnimationFrame(() => elements.mobileDetailClose.focus());
+  }
+}
+
+function closeMobileCategoryDetail() {
+  activeDetail = null;
   renderCategoryDetail();
 }
 
@@ -2319,6 +2344,10 @@ async function deleteBooking(id) {
 }
 
 function switchTab(tabName) {
+  if (tabName !== "dashboard" && activeDetail) {
+    closeMobileCategoryDetail();
+  }
+
   elements.tabs.forEach((tab) => {
     tab.classList.toggle("active", tab.dataset.tab === tabName);
   });
@@ -2374,6 +2403,15 @@ elements.detailTableBody.addEventListener("click", (event) => {
   const deleteButton = event.target.closest(".delete-button");
   if (!deleteButton) return;
   deleteBooking(deleteButton.dataset.id);
+});
+
+elements.mobileDetailBackdrop.addEventListener("click", closeMobileCategoryDetail);
+elements.mobileDetailClose.addEventListener("click", closeMobileCategoryDetail);
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && activeDetail && window.matchMedia("(max-width: 768px)").matches) {
+    closeMobileCategoryDetail();
+  }
 });
 
 function showStartupFallback(error) {

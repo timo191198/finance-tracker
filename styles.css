@@ -2339,6 +2339,202 @@ tbody tr:hover {
   }
 }
 
+@media (max-width: 768px) {
+  body:has(#entry-panel.active) .storage-note,
+  body:has(#entry-panel.active) .data-actions,
+  #entry-panel .hint-card {
+    display: none;
+  }
+
+  body:has(#entry-panel.active) .app-shell {
+    padding-top: 14px;
+  }
+
+  body:has(#entry-panel.active) .app-header {
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  body:has(#entry-panel.active) .app-header h1 {
+    font-size: 27px;
+    line-height: 1.12;
+  }
+
+  body:has(#entry-panel.active) .header-actions {
+    width: auto;
+    align-self: flex-end;
+  }
+
+  body:has(#entry-panel.active) .user-menu {
+    width: auto;
+    padding: 4px;
+  }
+
+  body:has(#entry-panel.active) .user-menu > span {
+    display: none;
+  }
+
+  body:has(#entry-panel.active) .profile-button,
+  body:has(#entry-panel.active) .logout-button {
+    min-height: 38px;
+    padding: 7px 10px;
+  }
+
+  body:has(#entry-panel.active) .top-toolbar {
+    margin-bottom: 10px;
+  }
+
+  body:has(#entry-panel.active) .tabs {
+    padding: 3px;
+  }
+
+  body:has(#entry-panel.active) .tab-button {
+    min-height: 40px;
+    padding: 7px 9px;
+  }
+
+  #entry-panel .content-grid {
+    display: block;
+  }
+
+  #entry-panel .entry-card {
+    padding: 14px;
+  }
+
+  #entry-panel .card-header {
+    margin-bottom: 10px;
+  }
+
+  #entry-panel .card-header h2 {
+    margin-bottom: 2px;
+    font-size: 18px;
+  }
+
+  #entry-panel .card-header p {
+    font-size: 13px;
+    line-height: 1.35;
+  }
+
+  #entry-panel .form-row {
+    gap: 5px;
+    margin-bottom: 9px;
+  }
+
+  #entry-panel label,
+  #entry-panel legend {
+    font-size: 12px;
+  }
+
+  #entry-panel input,
+  #entry-panel select,
+  #entry-panel textarea {
+    min-height: 42px;
+    padding: 8px 10px;
+  }
+
+  #entry-panel textarea {
+    height: 48px;
+    min-height: 48px;
+    max-height: 48px;
+    resize: none;
+  }
+
+  #entry-panel .segmented-control {
+    gap: 4px;
+    padding: 3px;
+  }
+
+  #entry-panel .segmented-control span {
+    min-height: 38px;
+    padding: 8px 10px;
+  }
+
+  #entry-panel .category-input-group {
+    gap: 7px;
+  }
+
+  #entry-panel .category-input-group .icon-button {
+    flex-basis: 42px;
+    width: 42px;
+    min-height: 42px;
+  }
+
+  #entry-panel .form-actions {
+    display: block;
+    min-height: 0;
+    margin-top: 2px;
+  }
+
+  #entry-panel .form-actions .primary-button {
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 16px;
+  }
+
+  #entry-panel .form-message {
+    min-height: 0;
+    margin-top: 6px;
+    font-size: 13px;
+  }
+
+  #entry-panel .form-message:empty {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  body:has(#entry-panel.active) .app-shell {
+    padding: 10px 8px 20px;
+  }
+
+  body:has(#entry-panel.active) .app-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  body:has(#entry-panel.active) .app-header h1 {
+    font-size: 23px;
+  }
+
+  body:has(#entry-panel.active) .header-actions {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  body:has(#entry-panel.active) .user-menu {
+    display: flex;
+    gap: 3px;
+    border-radius: 999px;
+  }
+
+  body:has(#entry-panel.active) .profile-button,
+  body:has(#entry-panel.active) .logout-button {
+    width: auto;
+    min-height: 36px;
+    padding: 6px 9px;
+    font-size: 13px;
+  }
+
+  #entry-panel .entry-card {
+    padding: 12px;
+  }
+
+  #entry-panel .card-header p {
+    display: none;
+  }
+
+  #entry-panel .form-row {
+    margin-bottom: 7px;
+  }
+
+  #entry-panel textarea {
+    height: 44px;
+    min-height: 44px;
+    max-height: 44px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

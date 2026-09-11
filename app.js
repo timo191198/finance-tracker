@@ -23,6 +23,19 @@ const defaultCategories = [
   "Bildung",
   "Sonstiges",
 ];
+const bookingTypes = {
+  income: { label: "Einnahme", pluralLabel: "Einnahmen", amountDirection: "positive" },
+  expense: { label: "Ausgabe", pluralLabel: "Ausgaben", amountDirection: "negative" },
+  saving: { label: "Sparen", pluralLabel: "Sparen", amountDirection: "negative" },
+  investment: { label: "Investition", pluralLabel: "Investitionen", amountDirection: "negative" },
+  adjustment: { label: "Ausgleich", pluralLabel: "Ausgleiche", amountDirection: "positive" },
+};
+const validBookingTypes = Object.keys(bookingTypes);
+const analysisTypes = ["expense", "income", "saving", "investment"];
+const automaticCategoriesByType = {
+  saving: "Sparen",
+  investment: "Investition",
+};
 
 const currencyFormatter = new Intl.NumberFormat("de-DE", {
   style: "currency",
@@ -51,6 +64,7 @@ const elements = {
   },
   form: document.querySelector("#booking-form"),
   amount: document.querySelector("#amount"),
+  categoryFormRow: document.querySelector("#category-form-row"),
   category: document.querySelector("#category"),
   openCategoryDialog: document.querySelector("#open-category-dialog"),
   categoryDialog: document.querySelector("#category-dialog"),
@@ -61,9 +75,25 @@ const elements = {
   description: document.querySelector("#description"),
   date: document.querySelector("#date"),
   dateInputs: document.querySelectorAll("[data-datepicker]"),
+  dataActions: document.querySelector(".data-actions"),
+  dataActionToggle: document.querySelector("#data-action-toggle"),
+  dataActionMenu: document.querySelector("#data-action-menu"),
   exportBackup: document.querySelector("#export-backup"),
   importBackup: document.querySelector("#import-backup"),
   backupFileInput: document.querySelector("#backup-file-input"),
+  exportCsv: document.querySelector("#export-csv"),
+  importCsv: document.querySelector("#import-csv"),
+  csvFileInput: document.querySelector("#csv-file-input"),
+  csvImportDialog: document.querySelector("#csv-import-dialog"),
+  csvImportForm: document.querySelector("#csv-import-form"),
+  cancelCsvImport: document.querySelector("#cancel-csv-import"),
+  confirmCsvImport: document.querySelector("#confirm-csv-import"),
+  csvPreviewTotal: document.querySelector("#csv-preview-total"),
+  csvPreviewNew: document.querySelector("#csv-preview-new"),
+  csvPreviewDuplicates: document.querySelector("#csv-preview-duplicates"),
+  csvPreviewErrors: document.querySelector("#csv-preview-errors"),
+  csvErrorList: document.querySelector("#csv-error-list"),
+  csvImportMessage: document.querySelector("#csv-import-message"),
   downloadReport: document.querySelector("#download-report"),
   dataActionMessage: document.querySelector("#data-action-message"),
   message: document.querySelector("#form-message"),
@@ -75,12 +105,18 @@ const elements = {
   },
   totalIncome: document.querySelector("#total-income"),
   totalExpenses: document.querySelector("#total-expenses"),
+  totalSavings: document.querySelector("#total-savings"),
+  totalInvestments: document.querySelector("#total-investments"),
   totalBalance: document.querySelector("#total-balance"),
   analysisTitle: document.querySelector("#analysis-title"),
   analysisModeButtons: document.querySelectorAll(".analysis-mode-button"),
   expenseDonut: document.querySelector("#expense-donut"),
   expenseLegend: document.querySelector("#expense-legend"),
   expenseEmptyState: document.querySelector("#expense-empty-state"),
+  analysisCarousel: document.querySelector("#analysis-carousel"),
+  analysisPrev: document.querySelector("#analysis-prev"),
+  analysisNext: document.querySelector("#analysis-next"),
+  analysisActiveLabel: document.querySelector("#analysis-active-label"),
   detailTitle: document.querySelector("#analysis-detail-title"),
   detailSubtitle: document.querySelector("#expense-detail-subtitle"),
   detailCard: document.querySelector(".expense-detail-card"),
@@ -89,8 +125,12 @@ const elements = {
   detailPlaceholder: document.querySelector("#expense-detail-placeholder"),
   detailContent: document.querySelector("#expense-detail-content"),
   detailTotal: document.querySelector("#detail-total"),
+  detailGrossExpenses: document.querySelector("#detail-gross-expenses"),
+  detailAdjustments: document.querySelector("#detail-adjustments"),
+  detailExpenseOnly: document.querySelectorAll(".detail-expense-only"),
   detailCount: document.querySelector("#detail-count"),
   detailTableBody: document.querySelector("#detail-bookings-table"),
+  detailTotalLabel: document.querySelector("#detail-total-label"),
 };
 
 let bookings = loadBookings();
@@ -107,7 +147,15 @@ let loadedUserId = null;
 let activeAnalysisType = "expense";
 let activeDatePicker = null;
 let activeDetail = null;
+let pendingCsvImport = null;
+let analysisSwipeStartX = null;
 const chartColors = ["#7f8f8b", "#b9a77d", "#9ba8bf", "#d0a19a", "#8faf9b", "#c3b5cf", "#a9a094", "#94abb1"];
+const lineSeriesMeta = {
+  income: { label: "Einnahmen", color: "#6fcf97" },
+  expenses: { label: "Netto-Ausgaben", color: "#e07a78" },
+  savings: { label: "Gespart", color: "#7db7e8" },
+  investments: { label: "Investiert", color: "#d8b45d" },
+};
 
 function toLocalIsoDate(date) {
   const year = date.getFullYear();
@@ -271,6 +319,7 @@ function mapTransactionRow(row) {
     description: row.description || "",
     date: row.date,
     createdAt: row.created_at,
+    userId: row.user_id,
   };
 }
 
@@ -1296,6 +1345,431 @@ function setDataActionMessage(text, isError = false) {
   }
 }
 
+function setDataActionMenuOpen(isOpen) {
+  elements.dataActionMenu.classList.toggle("hidden", !isOpen);
+  elements.dataActionToggle.setAttribute("aria-expanded", String(isOpen));
+}
+
+function toggleDataActionMenu(event) {
+  event.stopPropagation();
+  setDataActionMenuOpen(elements.dataActionMenu.classList.contains("hidden"));
+}
+
+function closeDataActionMenu() {
+  setDataActionMenuOpen(false);
+}
+
+function normalizeCsvHeader(header) {
+  return String(header || "").trim().toLowerCase().replace(/-/g, "_");
+}
+
+function countCsvDelimiter(line, delimiter) {
+  let count = 0;
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    const nextCharacter = line[index + 1];
+
+    if (character === '"' && inQuotes && nextCharacter === '"') {
+      index += 1;
+      continue;
+    }
+
+    if (character === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+
+    if (!inQuotes && character === delimiter) {
+      count += 1;
+    }
+  }
+
+  return count;
+}
+
+function detectCsvDelimiter(csvText) {
+  const firstLine = String(csvText || "").split(/\r?\n/)[0] || "";
+  return countCsvDelimiter(firstLine, ";") >= countCsvDelimiter(firstLine, ",") ? ";" : ",";
+}
+
+function parseCsv(csvText, delimiter = ";") {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < csvText.length; index += 1) {
+    const character = csvText[index];
+    const nextCharacter = csvText[index + 1];
+
+    if (character === '"' && inQuotes && nextCharacter === '"') {
+      cell += '"';
+      index += 1;
+      continue;
+    }
+
+    if (character === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+
+    if (!inQuotes && character === delimiter) {
+      row.push(cell);
+      cell = "";
+      continue;
+    }
+
+    if (!inQuotes && (character === "\n" || character === "\r")) {
+      if (character === "\r" && nextCharacter === "\n") {
+        index += 1;
+      }
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+
+    cell += character;
+  }
+
+  if (inQuotes) {
+    throw new Error("Ungültige CSV-Datei: Ein Textfeld wurde nicht geschlossen.");
+  }
+
+  if (cell || row.length) {
+    row.push(cell);
+    rows.push(row);
+  }
+
+  return rows.filter((csvRow) => csvRow.some((value) => String(value || "").trim()));
+}
+
+function protectCsvCell(value, shouldProtectFormula = true) {
+  const text = String(value ?? "");
+  const normalized = text.replace(/\r\n/g, "\n");
+  const safeText = shouldProtectFormula && /^[=+\-@\t\r]/.test(normalized) ? `'${normalized}` : normalized;
+  return `"${safeText.replace(/"/g, '""')}"`;
+}
+
+function unprotectCsvCell(value) {
+  const text = String(value ?? "").trim();
+  return /^'[=+\-@\t\r]/.test(text) ? text.slice(1) : text;
+}
+
+function isValidCsvId(id) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
+}
+
+function createCsvSignature(booking) {
+  const amount = Number(booking.amount);
+  return [
+    booking.date,
+    booking.type,
+    normalizeCategoryName(String(booking.category || "")).toLowerCase(),
+    String(booking.description || "").trim(),
+    Number.isFinite(amount) ? amount.toFixed(2) : "",
+  ].join("|");
+}
+
+function normalizeCsvType(typeValue) {
+  const type = String(typeValue || "").trim().toLowerCase();
+  if (type === "income" || type === "einnahme" || type === "einnahmen") return "income";
+  if (type === "expense" || type === "ausgabe" || type === "ausgaben") return "expense";
+  if (type === "saving" || type === "sparen") return "saving";
+  if (type === "investment" || type === "investition" || type === "investitionen") return "investment";
+  if (type === "adjustment" || type === "ausgleich" || type === "ausgleiche") return "adjustment";
+  return "";
+}
+
+function parseCsvAmount(amountValue) {
+  const rawValue = String(amountValue || "").trim();
+  if (!rawValue) return NaN;
+
+  let normalizedValue = rawValue.replace(/\s/g, "").replace(/€/g, "");
+  const lastComma = normalizedValue.lastIndexOf(",");
+  const lastDot = normalizedValue.lastIndexOf(".");
+
+  if (lastComma > -1 && lastDot > -1) {
+    normalizedValue =
+      lastComma > lastDot ? normalizedValue.replace(/\./g, "").replace(",", ".") : normalizedValue.replace(/,/g, "");
+  } else if (lastComma > -1) {
+    normalizedValue = normalizedValue.replace(/\./g, "").replace(",", ".");
+  }
+
+  return Number(normalizedValue);
+}
+
+function normalizeCsvBooking(row, rowNumber) {
+  const type = normalizeCsvType(row.type);
+  const date = formatDateForStorage(unprotectCsvCell(row.date));
+  let category = normalizeCategoryName(unprotectCsvCell(row.category || ""));
+  const description = unprotectCsvCell(row.description || "");
+  const parsedAmount = parseCsvAmount(row.amount);
+  const rawId = unprotectCsvCell(row.id || "");
+  const id = isValidCsvId(rawId) ? rawId : crypto.randomUUID();
+  const createdAt = unprotectCsvCell(row.created_at || row.createdAt || "") || new Date().toISOString();
+  const errors = [];
+
+  if (!date || !isValidIsoDate(date)) errors.push("ungültiges Datum");
+  if (!type) errors.push("ungültiger Typ");
+  if (!category && automaticCategoriesByType[type]) {
+    category = automaticCategoriesByType[type];
+  }
+  if (!category) errors.push("fehlende Kategorie");
+  if (!Number.isFinite(parsedAmount) || parsedAmount === 0) errors.push("ungültiger Betrag");
+
+  if (errors.length) {
+    return { rowNumber, errors };
+  }
+
+  return {
+    rowNumber,
+    booking: {
+      id: id || crypto.randomUUID(),
+      amount: getSignedAmountByType(parsedAmount, type),
+      type,
+      category,
+      description: description.trim(),
+      date,
+      createdAt: Number.isNaN(Date.parse(createdAt)) ? new Date().toISOString() : createdAt,
+    },
+  };
+}
+
+function getExistingBookingKeys() {
+  return {
+    ids: new Set(bookings.map((booking) => booking.id).filter(Boolean)),
+    signatures: new Set(bookings.map(createCsvSignature)),
+  };
+}
+
+function buildCsvImportPreview(csvText) {
+  const delimiter = detectCsvDelimiter(csvText);
+  const rows = parseCsv(csvText.replace(/^\uFEFF/, ""), delimiter);
+
+  if (rows.length < 2) {
+    throw new Error("Die CSV-Datei enthält keine Buchungen.");
+  }
+
+  const headers = rows[0].map(normalizeCsvHeader);
+  const requiredHeaders = ["date", "type", "category", "amount"];
+  const missingHeaders = requiredHeaders.filter((header) => !headers.includes(header));
+
+  if (missingHeaders.length) {
+    throw new Error(`Fehlende Pflichtspalten: ${missingHeaders.join(", ")}.`);
+  }
+
+  const existing = getExistingBookingKeys();
+  const seenIds = new Set();
+  const seenSignatures = new Set();
+  const validBookings = [];
+  const duplicateRows = [];
+  const errorRows = [];
+
+  rows.slice(1).forEach((csvRow, index) => {
+    const rowNumber = index + 2;
+    const row = {};
+    headers.forEach((header, headerIndex) => {
+      row[header] = csvRow[headerIndex] || "";
+    });
+
+    const normalized = normalizeCsvBooking(row, rowNumber);
+
+    if (normalized.errors) {
+      errorRows.push({ rowNumber, message: normalized.errors.join(", ") });
+      return;
+    }
+
+    const { booking } = normalized;
+    const signature = createCsvSignature(booking);
+    const hasDuplicateId = booking.id && (existing.ids.has(booking.id) || seenIds.has(booking.id));
+    const hasDuplicateSignature = existing.signatures.has(signature) || seenSignatures.has(signature);
+
+    if (hasDuplicateId || hasDuplicateSignature) {
+      duplicateRows.push(rowNumber);
+      return;
+    }
+
+    validBookings.push(booking);
+    seenIds.add(booking.id);
+    seenSignatures.add(signature);
+  });
+
+  return {
+    totalRows: rows.length - 1,
+    newBookings: validBookings,
+    duplicateRows,
+    errorRows,
+  };
+}
+
+function getCsvExportFilename() {
+  const from = getDateFilterValue(elements.filters.from);
+  const to = getDateFilterValue(elements.filters.to);
+
+  if (from && to) return `finance-tracker-export-${from}-bis-${to}.csv`;
+  if (from) return `finance-tracker-export-ab-${from}.csv`;
+  if (to) return `finance-tracker-export-bis-${to}.csv`;
+  return `finance-tracker-export-${todayIsoDate()}.csv`;
+}
+
+function exportCsv() {
+  const headers = ["id", "date", "type", "category", "description", "amount", "created_at", "user_id"];
+  const csvRows = getFilteredBookings().map((booking) => [
+    booking.id || "",
+    booking.date || "",
+    booking.type || "",
+    booking.category || "",
+    booking.description || "",
+    Number.isFinite(Number(booking.amount)) ? String(Number(booking.amount)) : "",
+    booking.createdAt || "",
+    booking.userId || currentUser?.id || "",
+  ]);
+  const csv = [
+    headers.map((cell) => protectCsvCell(cell, false)).join(";"),
+    ...csvRows.map((row) =>
+      row
+        .map((cell, index) => protectCsvCell(cell, index !== 5))
+        .join(";")
+    ),
+  ].join("\r\n");
+  const filename = getCsvExportFilename();
+
+  downloadBlob(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }), filename);
+  setDataActionMessage(csvRows.length ? "CSV exportiert." : "CSV ohne Buchungen im gewählten Zeitraum exportiert.");
+}
+
+function setCsvImportMessage(text, isError = false) {
+  elements.csvImportMessage.textContent = text;
+  elements.csvImportMessage.classList.toggle("error", isError);
+}
+
+function openCsvImportPreview(preview) {
+  if (elements.csvImportDialog.open) {
+    elements.csvImportDialog.close();
+  }
+
+  pendingCsvImport = preview;
+  elements.csvPreviewTotal.textContent = String(preview.totalRows);
+  elements.csvPreviewNew.textContent = String(preview.newBookings.length);
+  elements.csvPreviewDuplicates.textContent = String(preview.duplicateRows.length);
+  elements.csvPreviewErrors.textContent = String(preview.errorRows.length);
+  elements.confirmCsvImport.disabled = preview.newBookings.length === 0 || preview.errorRows.length > 0;
+
+  if (preview.errorRows.length) {
+    const visibleErrors = preview.errorRows.slice(0, 6);
+    elements.csvErrorList.innerHTML = visibleErrors
+      .map((error) => `<p>Zeile ${error.rowNumber}: ${error.message}</p>`)
+      .join("");
+    if (preview.errorRows.length > visibleErrors.length) {
+      elements.csvErrorList.insertAdjacentHTML("beforeend", "<p>Weitere fehlerhafte Zeilen wurden ausgeblendet.</p>");
+    }
+  } else {
+    elements.csvErrorList.innerHTML = "";
+  }
+
+  elements.csvErrorList.classList.toggle("hidden", preview.errorRows.length === 0);
+  let message = "Prüfung abgeschlossen. Du kannst den Import bestätigen.";
+  if (preview.errorRows.length) {
+    message = "Bitte korrigiere die fehlerhaften Zeilen und wähle die CSV-Datei erneut aus.";
+  } else if (!preview.newBookings.length) {
+    message = "Keine neuen Buchungen gefunden. Bestehende Daten bleiben unverändert.";
+  }
+  setCsvImportMessage(message);
+  elements.csvImportDialog.showModal();
+}
+
+function closeCsvImportDialog() {
+  pendingCsvImport = null;
+  elements.csvImportDialog.close();
+  setCsvImportMessage("");
+}
+
+function importCsvFile(file) {
+  const reader = new FileReader();
+
+  reader.addEventListener("load", () => {
+    try {
+      const preview = buildCsvImportPreview(String(reader.result || ""));
+      openCsvImportPreview(preview);
+    } catch (error) {
+      setDataActionMessage(error.message || "Die CSV-Datei konnte nicht geprüft werden.", true);
+    } finally {
+      elements.csvFileInput.value = "";
+    }
+  });
+
+  reader.addEventListener("error", () => {
+    setDataActionMessage("Die CSV-Datei konnte nicht gelesen werden.", true);
+    elements.csvFileInput.value = "";
+  });
+
+  reader.readAsText(file, "utf-8");
+}
+
+async function importCsvBookings(event) {
+  event.preventDefault();
+
+  if (!pendingCsvImport) {
+    setCsvImportMessage("Bitte wähle zuerst eine CSV-Datei aus.", true);
+    return;
+  }
+
+  if (pendingCsvImport.errorRows.length) {
+    setCsvImportMessage("Der Import ist erst nach Korrektur der fehlerhaften Zeilen möglich.", true);
+    return;
+  }
+
+  const bookingsToImport = pendingCsvImport.newBookings;
+
+  if (!bookingsToImport.length) {
+    setCsvImportMessage("Es wurden keine neuen Buchungen gefunden.", true);
+    return;
+  }
+
+  elements.confirmCsvImport.disabled = true;
+  elements.confirmCsvImport.textContent = "Importiert...";
+  let importedCount = 0;
+
+  try {
+    const missingCategories = bookingsToImport
+      .map((booking) => booking.category)
+      .filter((category, index, list) => list.findIndex((item) => item.toLowerCase() === category.toLowerCase()) === index)
+      .filter((category) => !categories.some((existingCategory) => existingCategory.toLowerCase() === category.toLowerCase()));
+
+    for (const category of missingCategories) {
+      await withTimeout(saveCategory(category), AUTH_ACTION_TIMEOUT_MS, "CSV-Kategorie importieren");
+    }
+
+    for (const booking of bookingsToImport) {
+      const safeBooking = {
+        ...booking,
+        id: isCloudMode() ? crypto.randomUUID() : booking.id,
+      };
+      await withTimeout(saveTransaction(safeBooking), AUTH_ACTION_TIMEOUT_MS, "CSV-Buchung importieren");
+      importedCount += 1;
+    }
+
+    activeDetail = null;
+    render();
+    closeCsvImportDialog();
+    setDataActionMessage(`${bookingsToImport.length} Buchung(en) aus CSV importiert.`);
+  } catch (error) {
+    console.error("csv: import failed", error);
+    if (pendingCsvImport) {
+      pendingCsvImport.newBookings = bookingsToImport.slice(importedCount);
+      elements.csvPreviewNew.textContent = String(pendingCsvImport.newBookings.length);
+    }
+    setCsvImportMessage(error.message || "CSV-Import teilweise fehlgeschlagen.", true);
+  } finally {
+    elements.confirmCsvImport.disabled = false;
+    elements.confirmCsvImport.textContent = "Import bestätigen";
+  }
+}
+
 function createBackupData() {
   return {
     app: "finance-tracker-mvp",
@@ -1316,7 +1790,7 @@ function isValidBooking(booking) {
     booking &&
     typeof booking.id === "string" &&
     typeof booking.amount === "number" &&
-    (booking.type === "income" || booking.type === "expense") &&
+    isValidBookingType(booking.type) &&
     typeof booking.category === "string" &&
     typeof booking.description === "string" &&
     isValidIsoDate(booking.date)
@@ -1368,7 +1842,7 @@ function importBackupFile(file) {
 
       bookings = backupData.data.bookings;
       categories = mergeCategories(backupData.data.categories.map(normalizeCategoryName));
-      activeAnalysisType = ["income", "expense"].includes(backupData.data.settings?.activeAnalysisType)
+      activeAnalysisType = analysisTypes.includes(backupData.data.settings?.activeAnalysisType)
         ? backupData.data.settings.activeAnalysisType
         : "expense";
       activeDetail = null;
@@ -1397,18 +1871,40 @@ function getReportRange() {
   return { from, to };
 }
 
+function getPositiveAmount(booking) {
+  return Math.abs(Number(booking.amount) || 0);
+}
+
 function aggregateByCategory(visibleBookings, type) {
   const totals = new Map();
 
   visibleBookings
     .filter((booking) => booking.type === type)
     .forEach((booking) => {
-      const amount = type === "expense" ? Math.abs(booking.amount) : booking.amount;
+      const amount = getPositiveAmount(booking);
       totals.set(booking.category, (totals.get(booking.category) || 0) + amount);
     });
 
   return [...totals.entries()]
+    .filter(([, total]) => total > 0)
     .map(([category, total]) => ({ category, total }))
+    .sort((first, second) => second.total - first.total);
+}
+
+function aggregateNetExpensesByCategory(visibleBookings) {
+  const totals = new Map();
+
+  visibleBookings.forEach((booking) => {
+    if (booking.type !== "expense" && booking.type !== "adjustment") return;
+
+    const currentTotal = totals.get(booking.category) || 0;
+    const amount = booking.type === "expense" ? getPositiveAmount(booking) : -getPositiveAmount(booking);
+    totals.set(booking.category, currentTotal + amount);
+  });
+
+  return [...totals.entries()]
+    .map(([category, total]) => ({ category, total: Math.max(0, total) }))
+    .filter((item) => item.total > 0)
     .sort((first, second) => second.total - first.total);
 }
 
@@ -1423,8 +1919,10 @@ function getReportData() {
     range,
     bookings: reportBookings,
     totals,
-    expensesByCategory: aggregateByCategory(reportBookings, "expense"),
+    expensesByCategory: aggregateNetExpensesByCategory(reportBookings),
     incomeByCategory: aggregateByCategory(reportBookings, "income"),
+    savingsByCategory: aggregateByCategory(reportBookings, "saving"),
+    investmentsByCategory: aggregateByCategory(reportBookings, "investment"),
   };
 }
 
@@ -1554,13 +2052,18 @@ function downloadPdfReport() {
     { text: `Zeitraum: ${rangeLabel}`, size: 11, color: "0.43 0.43 0.45", gapBefore: 4 },
     { text: "Übersicht", size: 14, bold: true, gapBefore: 18 },
     { text: `Gesamte Einnahmen: ${formatCurrency(report.totals.income)}`, color: "0.14 0.48 0.31" },
-    { text: `Gesamte Ausgaben: ${formatCurrency(-report.totals.expenses)}`, color: "0.69 0.28 0.24" },
-    { text: `Saldo: ${formatCurrency(report.totals.balance)}` },
+    { text: `Brutto-Ausgaben: ${formatCurrency(-report.totals.grossExpenses)}`, color: "0.69 0.28 0.24" },
+    { text: `Ausgleich: ${formatCurrency(report.totals.adjustments)}`, color: "0.14 0.48 0.31" },
+    { text: `Netto-Ausgaben: ${formatCurrency(-report.totals.expenses)}`, color: "0.69 0.28 0.24" },
+    { text: `Gespart: ${formatCurrency(report.totals.savings)}` },
+    { text: `Investiert: ${formatCurrency(report.totals.investments)}` },
+    { text: `Vermögensaufbau: ${formatCurrency(report.totals.wealthBuilding)}` },
+    { text: `Monatsrest / Cashflow: ${formatCurrency(report.totals.balance)}` },
   ];
 
   addReportSection(
     lines,
-    "Ausgaben nach Kategorie",
+    "Netto-Ausgaben nach Kategorie",
     report.expensesByCategory.map((item) => ({
       text: `${item.category}: ${formatCurrency(-item.total)}`,
       color: "0.69 0.28 0.24",
@@ -1573,6 +2076,22 @@ function downloadPdfReport() {
     report.incomeByCategory.map((item) => ({
       text: `${item.category}: ${formatCurrency(item.total)}`,
       color: "0.14 0.48 0.31",
+    }))
+  );
+
+  addReportSection(
+    lines,
+    "Sparen nach Kategorie",
+    report.savingsByCategory.map((item) => ({
+      text: `${item.category}: ${formatCurrency(item.total)}`,
+    }))
+  );
+
+  addReportSection(
+    lines,
+    "Investitionen nach Kategorie",
+    report.investmentsByCategory.map((item) => ({
+      text: `${item.category}: ${formatCurrency(item.total)}`,
     }))
   );
 
@@ -1635,21 +2154,63 @@ function getSelectedType() {
   return new FormData(elements.form).get("type");
 }
 
-function signedAmount(amount, type) {
+function getCategoryForType(type) {
+  return automaticCategoriesByType[type] || elements.category.value;
+}
+
+function requiresManualCategory(type) {
+  return !Object.prototype.hasOwnProperty.call(automaticCategoriesByType, type);
+}
+
+function updateCategoryControlForType(type = getSelectedType()) {
+  const isManualCategory = requiresManualCategory(type);
+  elements.category.disabled = !isManualCategory;
+  elements.openCategoryDialog.disabled = !isManualCategory;
+  elements.category.required = isManualCategory;
+  elements.categoryFormRow.classList.toggle("category-disabled", !isManualCategory);
+
+  if (!isManualCategory) {
+    elements.category.value = "";
+  }
+}
+
+function isValidBookingType(type) {
+  return validBookingTypes.includes(type);
+}
+
+function getSignedAmountByType(amount, type) {
   const absoluteAmount = Math.abs(Number(amount));
-  return type === "expense" ? -absoluteAmount : absoluteAmount;
+  const amountDirection = bookingTypes[type]?.amountDirection || "positive";
+  return amountDirection === "negative" ? -absoluteAmount : absoluteAmount;
+}
+
+function signedAmount(amount, type) {
+  return getSignedAmountByType(amount, type);
 }
 
 function displayType(type) {
-  return type === "income" ? "Einnahme" : "Ausgabe";
+  return bookingTypes[type]?.label || "Unbekannt";
 }
 
 function displayAnalysisType(type) {
-  return type === "income" ? "Einnahmen" : "Ausgaben";
+  return bookingTypes[type]?.pluralLabel || "Buchungen";
+}
+
+function getAnalysisEmptyText(type) {
+  if (type === "income") return "Keine Einnahmen im gewählten Zeitraum.";
+  if (type === "saving") return "Keine Sparbuchungen im gewählten Zeitraum.";
+  if (type === "investment") return "Keine Investitionen im gewählten Zeitraum.";
+  return "Keine Ausgaben im gewählten Zeitraum.";
 }
 
 function formatDate(dateValue) {
   return formatDateForDisplay(dateValue);
+}
+
+function formatShortDisplayDate(dateValue) {
+  const displayDate = formatDateForDisplay(dateValue);
+  if (!displayDate) return "";
+  return `${displayDate.slice(0, 6)}${displayDate.slice(-2)}`;
 }
 
 function formatCurrency(value) {
@@ -1659,6 +2220,12 @@ function formatCurrency(value) {
 function formatSignedCurrency(value) {
   if (value > 0) return `+${formatCurrency(value)}`;
   return formatCurrency(value);
+}
+
+function getDetailAmountClass(type, amount) {
+  if (type === "saving") return "amount-saving";
+  if (type === "investment") return "amount-investment";
+  return amount < 0 ? "amount-expense" : "amount-income";
 }
 
 function getTodaysBookings() {
@@ -1898,15 +2465,20 @@ function resetForm() {
   elements.form.reset();
   setDateInputValue(elements.date, todayIsoDate());
   document.querySelector('input[name="type"][value="income"]').checked = true;
+  updateCategoryControlForType("income");
   elements.amount.focus();
 }
 
-function validateBooking(amount, category, date, visibleDate = "") {
+function validateBooking(amount, category, date, visibleDate = "", type = "") {
   if (!amount || Number(amount) <= 0) {
     return "Bitte gib einen gültigen Betrag ein.";
   }
 
-  if (!category || !categories.includes(category)) {
+  if (!isValidBookingType(type)) {
+    return "Bitte wähle einen gültigen Buchungstyp aus.";
+  }
+
+  if (requiresManualCategory(type) && (!category || !categories.includes(category))) {
     return "Bitte wähle eine Kategorie aus.";
   }
 
@@ -1983,11 +2555,11 @@ async function handleSubmit(event) {
 
   const type = getSelectedType();
   const amount = elements.amount.value;
-  const category = elements.category.value;
+  const category = getCategoryForType(type);
   const description = elements.description.value.trim();
   const visibleDate = elements.date.value;
   const date = formatDateForStorage(elements.date.value);
-  const validationError = validateBooking(amount, category, date, visibleDate);
+  const validationError = validateBooking(amount, category, date, visibleDate, type);
 
   if (validationError) {
     setMessage(validationError, true);
@@ -2032,25 +2604,46 @@ function getFilteredBookings() {
 }
 
 function calculateTotals(filteredBookings) {
-  return filteredBookings.reduce(
+  const totals = filteredBookings.reduce(
     (totals, booking) => {
-      if (booking.amount >= 0) {
-        totals.income += booking.amount;
-      } else {
-        totals.expenses += Math.abs(booking.amount);
+      if (booking.type === "income") {
+        totals.income += Math.abs(booking.amount);
+      } else if (booking.type === "expense") {
+        totals.grossExpenses += Math.abs(booking.amount);
+      } else if (booking.type === "adjustment") {
+        totals.adjustments += Math.abs(booking.amount);
+      } else if (booking.type === "saving") {
+        totals.savings += Math.abs(booking.amount);
+      } else if (booking.type === "investment") {
+        totals.investments += Math.abs(booking.amount);
       }
 
-      totals.balance += booking.amount;
       return totals;
     },
-    { income: 0, expenses: 0, balance: 0 }
+    {
+      income: 0,
+      grossExpenses: 0,
+      adjustments: 0,
+      expenses: 0,
+      savings: 0,
+      investments: 0,
+      wealthBuilding: 0,
+      balance: 0,
+    }
   );
+
+  totals.expenses = Math.max(0, totals.grossExpenses - totals.adjustments);
+  totals.wealthBuilding = totals.savings + totals.investments;
+  totals.balance = totals.income - totals.expenses - totals.savings - totals.investments;
+  return totals;
 }
 
 function renderMetrics(filteredBookings) {
   const totals = calculateTotals(filteredBookings);
   elements.totalIncome.textContent = formatCurrency(totals.income);
   elements.totalExpenses.textContent = formatCurrency(totals.expenses);
+  elements.totalSavings.textContent = formatCurrency(totals.savings);
+  elements.totalInvestments.textContent = formatCurrency(totals.investments);
   elements.totalBalance.textContent = formatCurrency(totals.balance);
   elements.totalBalance.className = totals.balance < 0 ? "amount-expense" : "amount-income";
 }
@@ -2060,22 +2653,37 @@ function createBookingTableRows(tableBody, visibleBookings, options = {}) {
 
   visibleBookings.forEach((booking) => {
     const row = document.createElement("tr");
-    const amountClass = booking.amount < 0 ? "amount-expense" : "amount-income";
+    const amountClass = getDetailAmountClass(booking.type, booking.amount);
     const dateCell = document.createElement("td");
     const descriptionCell = document.createElement("td");
     const amountCell = document.createElement("td");
     const actionCell = document.createElement("td");
     const deleteButton = document.createElement("button");
 
-    dateCell.textContent = formatDate(booking.date);
-    descriptionCell.textContent = booking.description || "-";
+    dateCell.textContent = options.compact ? formatShortDisplayDate(booking.date) : formatDate(booking.date);
+    descriptionCell.textContent =
+      options.showTypeInDescription && booking.type
+        ? `${displayType(booking.type)} · ${booking.description || "-"}`
+        : booking.description || "-";
     amountCell.className = `align-right ${amountClass}`;
     amountCell.textContent = formatCurrency(booking.amount);
     deleteButton.className = "delete-button";
     deleteButton.type = "button";
     deleteButton.dataset.id = booking.id;
     deleteButton.dataset.source = options.source || "";
-    deleteButton.textContent = "Löschen";
+    deleteButton.setAttribute("aria-label", "Buchung löschen");
+    deleteButton.title = "Buchung löschen";
+
+    if (options.compact) {
+      const trashIcon = document.createElement("span");
+      deleteButton.classList.add("delete-button-icon");
+      trashIcon.className = "trash-icon";
+      trashIcon.setAttribute("aria-hidden", "true");
+      deleteButton.append(trashIcon);
+    } else {
+      deleteButton.textContent = "Löschen";
+    }
+
     actionCell.append(deleteButton);
 
     if (options.compact) {
@@ -2097,112 +2705,183 @@ function createBookingTableRows(tableBody, visibleBookings, options = {}) {
 }
 
 function getCategoryBreakdown(filteredBookings, type) {
-  const totalsByCategory = new Map();
+  const breakdown = type === "expense" ? aggregateNetExpensesByCategory(filteredBookings) : aggregateByCategory(filteredBookings, type);
 
-  filteredBookings
-    .filter((booking) => booking.type === type)
-    .forEach((booking) => {
-      const amount = type === "expense" ? Math.abs(booking.amount) : booking.amount;
-      totalsByCategory.set(booking.category, (totalsByCategory.get(booking.category) || 0) + amount);
-    });
-
-  return [...totalsByCategory.entries()]
-    .map(([category, total], index) => ({
-      category,
-      total,
-      color: chartColors[index % chartColors.length],
-    }))
-    .filter((item) => item.total > 0)
-    .sort((first, second) => second.total - first.total);
+  return breakdown.map((item, index) => ({
+    ...item,
+    color: chartColors[index % chartColors.length],
+  }));
 }
 
-function renderDonutChart({ container, legend, emptyState, data, type, emptyText }) {
-  container.innerHTML = "";
-  legend.innerHTML = "";
-  emptyState.textContent = emptyText;
+function getMonthKey(dateValue) {
+  return String(dateValue || "").slice(0, 7);
+}
 
-  const total = data.reduce((sum, item) => sum + item.total, 0);
-  const hasData = total > 0;
+function getMonthLabel(monthKey) {
+  const [year, month] = monthKey.split("-").map(Number);
+  const date = new Date(year, month - 1, 1);
+  return new Intl.DateTimeFormat("de-DE", { month: "short" }).format(date).replace(".", "");
+}
+
+function getMonthRange() {
+  const from = getDateFilterValue(elements.filters.from) || firstDayOfCurrentMonthIsoDate();
+  const to = getDateFilterValue(elements.filters.to) || todayIsoDate();
+  const fromDate = parseIsoDate(from);
+  const toDate = parseIsoDate(to);
+
+  if (!fromDate || !toDate || fromDate > toDate) return [];
+
+  const months = [];
+  let cursor = new Date(fromDate.getFullYear(), fromDate.getMonth(), 1);
+  const end = new Date(toDate.getFullYear(), toDate.getMonth(), 1);
+
+  while (cursor <= end) {
+    months.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`);
+    cursor = addMonths(cursor, 1);
+  }
+
+  return months;
+}
+
+function getMonthlyDashboardData(filteredBookings) {
+  const months = getMonthRange();
+
+  return months.map((monthKey) => {
+    const monthBookings = filteredBookings.filter((booking) => getMonthKey(booking.date) === monthKey);
+    const totals = calculateTotals(monthBookings);
+    const netExpenses = aggregateNetExpensesByCategory(monthBookings).reduce((sum, item) => sum + item.total, 0);
+
+    return {
+      key: monthKey,
+      label: getMonthLabel(monthKey),
+      isCurrentMonth: monthKey === getMonthKey(todayIsoDate()),
+      income: totals.income,
+      expenses: netExpenses,
+      savings: totals.savings,
+      investments: totals.investments,
+    };
+  });
+}
+
+function createSvgElement(name, attributes = {}) {
+  const svgNamespace = "http://www.w3.org/2000/svg";
+  const element = document.createElementNS(svgNamespace, name);
+
+  Object.entries(attributes).forEach(([key, value]) => {
+    element.setAttribute(key, String(value));
+  });
+
+  return element;
+}
+
+function formatCompactCurrency(value) {
+  if (value >= 1000) return `${Math.round(value / 1000)} Tsd. €`;
+  return `${Math.round(value)} €`;
+}
+
+function renderLineChart({ container, emptyState, data }) {
+  container.innerHTML = "";
+  emptyState.textContent = "Keine Buchungen im gewählten Zeitraum.";
+
+  const seriesKeys = Object.keys(lineSeriesMeta);
+  const maxValue = Math.max(...data.flatMap((item) => seriesKeys.map((key) => item[key])), 0);
+  const hasData = data.length > 0 && maxValue > 0;
 
   emptyState.classList.toggle("visible", !hasData);
   container.classList.toggle("hidden", !hasData);
-  legend.classList.toggle("hidden", !hasData);
 
   if (!hasData) return;
 
-  const svgNamespace = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(svgNamespace, "svg");
-  const radius = 58;
-  const circumference = 2 * Math.PI * radius;
-  let offset = 0;
+  const chartWidth = 760;
+  const chartHeight = 246;
+  const padding = { top: 18, right: 28, bottom: 42, left: 62 };
+  const plotWidth = chartWidth - padding.left - padding.right;
+  const plotHeight = chartHeight - padding.top - padding.bottom;
+  const yMax = Math.ceil(maxValue / 100) * 100 || 100;
+  const xForIndex = (index) => padding.left + (data.length === 1 ? plotWidth / 2 : (index / (data.length - 1)) * plotWidth);
+  const yForValue = (value) => padding.top + plotHeight - (value / yMax) * plotHeight;
+  const svg = createSvgElement("svg", {
+    viewBox: `0 0 ${chartWidth} ${chartHeight}`,
+    class: "line-chart-svg",
+    role: "img",
+    "aria-label": "Monatsvergleich für Einnahmen, Netto-Ausgaben, Sparen und Investitionen",
+  });
 
-  svg.setAttribute("viewBox", "0 0 180 180");
-  svg.setAttribute("class", "donut-svg");
-  svg.setAttribute("role", "img");
-  svg.setAttribute("aria-label", `${displayAnalysisType(type)} nach Kategorie`);
+  [0, 0.5, 1].forEach((ratio) => {
+    const y = padding.top + plotHeight - ratio * plotHeight;
+    const value = yMax * ratio;
+    svg.append(
+      createSvgElement("line", {
+        class: "line-chart-grid",
+        x1: padding.left,
+        y1: y,
+        x2: chartWidth - padding.right,
+        y2: y,
+      })
+    );
 
-  const backgroundCircle = document.createElementNS(svgNamespace, "circle");
-  backgroundCircle.setAttribute("cx", "90");
-  backgroundCircle.setAttribute("cy", "90");
-  backgroundCircle.setAttribute("r", String(radius));
-  backgroundCircle.setAttribute("class", "donut-background");
-  svg.append(backgroundCircle);
+    const label = createSvgElement("text", {
+      class: "line-chart-axis-label",
+      x: padding.left - 10,
+      y: y + 4,
+      "text-anchor": "end",
+    });
+    label.textContent = formatCompactCurrency(value);
+    svg.append(label);
+  });
 
-  data.forEach((item) => {
-    const segmentLength = (item.total / total) * circumference;
-    const segment = document.createElementNS(svgNamespace, "circle");
+  data.forEach((item, index) => {
+    const x = xForIndex(index);
+    const label = createSvgElement("text", {
+      class: item.isCurrentMonth ? "line-chart-axis-label current" : "line-chart-axis-label",
+      x,
+      y: chartHeight - 14,
+      "text-anchor": "middle",
+    });
+    label.textContent = item.isCurrentMonth ? `${item.label} · läuft` : item.label;
+    svg.append(label);
+  });
 
-    segment.setAttribute("cx", "90");
-    segment.setAttribute("cy", "90");
-    segment.setAttribute("r", String(radius));
-    segment.setAttribute("class", "donut-segment");
-    segment.setAttribute("stroke", item.color);
-    segment.setAttribute("stroke-dasharray", `${segmentLength} ${circumference - segmentLength}`);
-    segment.setAttribute("stroke-dashoffset", String(-offset));
-    segment.setAttribute("transform", "rotate(-90 90 90)");
-    segment.setAttribute("tabindex", "0");
-    segment.setAttribute("role", "button");
-    segment.setAttribute("aria-label", `${item.category}: ${formatCurrency(item.total)}`);
-    segment.addEventListener("click", () => openCategoryDetail(type, item.category));
-    segment.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        openCategoryDetail(type, item.category);
-      }
+  seriesKeys.forEach((key) => {
+    const meta = lineSeriesMeta[key];
+    const points = data.map((item, index) => `${xForIndex(index)},${yForValue(item[key])}`);
+    const line = createSvgElement("polyline", {
+      class: "line-chart-series",
+      points: points.join(" "),
+      stroke: meta.color,
     });
 
-    svg.append(segment);
-    offset += segmentLength;
+    svg.append(line);
+
+    data.forEach((item, index) => {
+      svg.append(
+        createSvgElement("circle", {
+          class: "line-chart-point",
+          cx: xForIndex(index),
+          cy: yForValue(item[key]),
+          r: 4.2,
+          fill: meta.color,
+        })
+      );
+    });
   });
 
-  const center = document.createElement("div");
-  const centerLabel = document.createElement("span");
-  const centerValue = document.createElement("strong");
-  center.className = "donut-center";
-  centerLabel.textContent = "Summe";
-  centerValue.textContent = formatCurrency(total);
-  center.append(centerLabel, centerValue);
-
-  container.append(svg, center);
-
-  data.forEach((item) => {
-    const legendButton = document.createElement("button");
+  const legend = document.createElement("div");
+  legend.className = "line-chart-legend";
+  seriesKeys.forEach((key) => {
+    const meta = lineSeriesMeta[key];
+    const legendItem = document.createElement("span");
     const swatch = document.createElement("span");
     const label = document.createElement("span");
-    const value = document.createElement("span");
 
-    legendButton.className = "donut-legend-item";
-    legendButton.type = "button";
-    legendButton.addEventListener("click", () => openCategoryDetail(type, item.category));
-    swatch.className = "legend-swatch";
-    swatch.style.background = item.color;
-    label.className = "legend-label";
-    label.textContent = item.category;
-    value.className = "legend-value";
-    value.textContent = formatCurrency(item.total);
-    legendButton.append(swatch, label, value);
-    legend.append(legendButton);
+    legendItem.className = "line-chart-legend-item";
+    swatch.style.background = meta.color;
+    label.textContent = meta.label;
+    legendItem.append(swatch, label);
+    legend.append(legendItem);
   });
+
+  container.append(svg, legend);
 }
 
 function renderAnalysisModeButtons() {
@@ -2211,38 +2890,82 @@ function renderAnalysisModeButtons() {
     button.classList.toggle("active", isActive);
     button.setAttribute("aria-pressed", String(isActive));
   });
+
+  if (elements.analysisActiveLabel) {
+    elements.analysisActiveLabel.textContent = displayAnalysisType(activeAnalysisType);
+  }
 }
 
 function setAnalysisType(type) {
-  if (!["expense", "income"].includes(type) || type === activeAnalysisType) return;
+  if (!analysisTypes.includes(type) || type === activeAnalysisType) return;
 
   activeAnalysisType = type;
   activeDetail = null;
   render();
 }
 
+function stepAnalysisType(direction) {
+  const currentIndex = analysisTypes.indexOf(activeAnalysisType);
+  const nextIndex = (currentIndex + direction + analysisTypes.length) % analysisTypes.length;
+  setAnalysisType(analysisTypes[nextIndex]);
+}
+
 function renderAnalysis(filteredBookings) {
   const typeLabel = displayAnalysisType(activeAnalysisType);
   const breakdown = getCategoryBreakdown(filteredBookings, activeAnalysisType);
 
-  elements.analysisTitle.textContent = `${typeLabel} nach Kategorie`;
+  elements.analysisTitle.textContent = typeLabel;
   elements.detailTitle.textContent = `${typeLabel}-Details`;
   renderAnalysisModeButtons();
 
-  renderDonutChart({
+  renderLineChart({
     container: elements.expenseDonut,
-    legend: elements.expenseLegend,
     emptyState: elements.expenseEmptyState,
-    data: breakdown,
-    type: activeAnalysisType,
-    emptyText: activeAnalysisType === "income" ? "Keine Einnahmen im gewählten Zeitraum." : "Keine Ausgaben im gewählten Zeitraum.",
+    data: getMonthlyDashboardData(filteredBookings),
   });
 
-  if (activeDetail && (activeDetail.type !== activeAnalysisType || !breakdown.some((item) => item.category === activeDetail.category))) {
+  renderAnalysisList(breakdown, activeAnalysisType);
+
+  if (!breakdown.length) {
     activeDetail = null;
+  } else if (!activeDetail || activeDetail.type !== activeAnalysisType || !breakdown.some((item) => item.category === activeDetail.category)) {
+    activeDetail = {
+      type: activeAnalysisType,
+      category: breakdown[0].category,
+    };
   }
 
   renderCategoryDetail();
+}
+
+function renderAnalysisList(data, type) {
+  elements.expenseLegend.innerHTML = "";
+  elements.expenseLegend.classList.toggle("hidden", false);
+
+  if (!data.length) {
+    const empty = document.createElement("p");
+    empty.className = "detail-list-empty";
+    empty.textContent = getAnalysisEmptyText(type);
+    elements.expenseLegend.append(empty);
+    return;
+  }
+
+  data.forEach((item) => {
+    const row = document.createElement("button");
+    const label = document.createElement("span");
+    const value = document.createElement("span");
+
+    row.className = "donut-legend-item dashboard-category-row";
+    row.type = "button";
+    row.addEventListener("click", () => openCategoryDetail(type, item.category));
+    label.className = "legend-label";
+    label.textContent = item.category;
+    value.className = "legend-value";
+    value.textContent = type === "expense" ? formatCurrency(-item.total) : formatCurrency(item.total);
+    value.classList.add(getDetailAmountClass(type, type === "expense" ? -item.total : item.total));
+    row.append(label, value);
+    elements.expenseLegend.append(row);
+  });
 }
 
 function getVisibleDateRangeLabel() {
@@ -2256,6 +2979,12 @@ function getVisibleDateRangeLabel() {
 }
 
 function getDetailBookings(type, category) {
+  if (type === "expense") {
+    return getFilteredBookings()
+      .filter((booking) => (booking.type === "expense" || booking.type === "adjustment") && booking.category === category)
+      .sort((first, second) => second.date.localeCompare(first.date));
+  }
+
   return getFilteredBookings()
     .filter((booking) => booking.type === type && booking.category === category)
     .sort((first, second) => second.date.localeCompare(first.date));
@@ -2278,25 +3007,46 @@ function renderCategoryDetail() {
   }
 
   if (!activeDetail) {
-    elements.detailSubtitle.textContent = "Wähle eine Kategorie aus, um Details zu sehen.";
+    const emptyText = getAnalysisEmptyText(activeAnalysisType);
+    elements.detailSubtitle.textContent = emptyText;
     elements.detailPlaceholder.classList.remove("hidden");
-    elements.detailPlaceholder.textContent = "Wähle eine Kategorie aus, um Details zu sehen.";
+    elements.detailPlaceholder.textContent = emptyText;
     elements.detailContent.classList.add("hidden");
+    elements.detailExpenseOnly.forEach((element) => element.classList.add("hidden"));
+    elements.detailTotalLabel.textContent = "Gesamtsumme";
     elements.detailTableBody.innerHTML = "";
     return;
   }
 
   const { type, category } = activeDetail;
   const detailBookings = getDetailBookings(type, category);
-  const total = detailBookings.reduce((sum, booking) => sum + (type === "expense" ? Math.abs(booking.amount) : booking.amount), 0);
+  const grossExpenses = detailBookings
+    .filter((booking) => booking.type === "expense")
+    .reduce((sum, booking) => sum + getPositiveAmount(booking), 0);
+  const adjustments = detailBookings
+    .filter((booking) => booking.type === "adjustment")
+    .reduce((sum, booking) => sum + getPositiveAmount(booking), 0);
+  const total =
+    type === "expense"
+      ? Math.max(0, grossExpenses - adjustments)
+      : detailBookings.reduce((sum, booking) => sum + getPositiveAmount(booking), 0);
 
   elements.detailSubtitle.textContent = `${typeLabel} · ${category} · ${getVisibleDateRangeLabel()}`;
   elements.detailPlaceholder.classList.add("hidden");
   elements.detailContent.classList.remove("hidden");
+  elements.detailExpenseOnly.forEach((element) => element.classList.toggle("hidden", type !== "expense"));
+  elements.detailTotalLabel.textContent = type === "expense" ? "Netto-Ausgaben" : "Gesamtsumme";
+  elements.detailGrossExpenses.textContent = formatCurrency(-grossExpenses);
+  elements.detailGrossExpenses.className = "amount-expense";
+  elements.detailAdjustments.textContent = formatCurrency(adjustments);
+  elements.detailAdjustments.className = "amount-income";
   elements.detailTotal.textContent = type === "expense" ? formatCurrency(-total) : formatCurrency(total);
   elements.detailTotal.className = type === "expense" ? "amount-expense" : "amount-income";
   elements.detailCount.textContent = String(detailBookings.length);
-  createBookingTableRows(elements.detailTableBody, detailBookings, { source: "detail", compact: true });
+  createBookingTableRows(elements.detailTableBody, detailBookings, {
+    source: "detail",
+    compact: true,
+  });
 }
 
 function openCategoryDetail(type, category) {
@@ -2315,7 +3065,7 @@ function closeMobileCategoryDetail() {
 
 function renderEntryPreview() {
   const todaysBookings = getTodaysBookings();
-  const todayTotal = todaysBookings.reduce((sum, booking) => sum + booking.amount, 0);
+  const todayTotal = calculateTotals(todaysBookings).balance;
   const balanceClass = todayTotal > 0 ? "today-balance-positive" : todayTotal < 0 ? "today-balance-negative" : "today-balance-neutral";
 
   elements.todayPreview.textContent = formatSignedCurrency(todayTotal);
@@ -2380,19 +3130,56 @@ elements.profileForm.addEventListener("submit", updateUserProfile);
 elements.cancelProfile.addEventListener("click", closeProfileModal);
 elements.logoutButton.addEventListener("click", signOutUser);
 elements.form.addEventListener("submit", handleSubmit);
+elements.form.querySelectorAll('input[name="type"]').forEach((input) => {
+  input.addEventListener("change", () => updateCategoryControlForType(input.value));
+});
 elements.openCategoryDialog.addEventListener("click", openCategoryDialog);
 elements.categoryForm.addEventListener("submit", handleCategorySubmit);
 elements.cancelCategory.addEventListener("click", closeCategoryDialog);
+elements.dataActionToggle.addEventListener("click", toggleDataActionMenu);
+elements.dataActionMenu.addEventListener("click", (event) => {
+  if (event.target.closest(".data-action-button")) {
+    closeDataActionMenu();
+  }
+});
 elements.exportBackup.addEventListener("click", exportBackup);
 elements.importBackup.addEventListener("click", () => elements.backupFileInput.click());
 elements.backupFileInput.addEventListener("change", () => {
   const [file] = elements.backupFileInput.files;
   if (file) importBackupFile(file);
 });
+elements.exportCsv.addEventListener("click", exportCsv);
+elements.importCsv.addEventListener("click", () => elements.csvFileInput.click());
+elements.csvFileInput.addEventListener("change", () => {
+  const [file] = elements.csvFileInput.files;
+  if (file) importCsvFile(file);
+});
+elements.csvImportForm.addEventListener("submit", importCsvBookings);
+elements.cancelCsvImport.addEventListener("click", closeCsvImportDialog);
+elements.csvImportDialog.addEventListener("close", () => {
+  if (!elements.csvImportDialog.open) {
+    pendingCsvImport = null;
+  }
+});
 elements.downloadReport.addEventListener("click", downloadPdfReport);
 
 elements.analysisModeButtons.forEach((button) => {
   button.addEventListener("click", (event) => setAnalysisType(event.currentTarget.dataset.analysisType));
+});
+elements.analysisPrev.addEventListener("click", () => stepAnalysisType(-1));
+elements.analysisNext.addEventListener("click", () => stepAnalysisType(1));
+elements.analysisCarousel.addEventListener("touchstart", (event) => {
+  analysisSwipeStartX = event.changedTouches[0]?.clientX ?? null;
+});
+elements.analysisCarousel.addEventListener("touchend", (event) => {
+  if (analysisSwipeStartX === null) return;
+
+  const endX = event.changedTouches[0]?.clientX ?? analysisSwipeStartX;
+  const deltaX = endX - analysisSwipeStartX;
+  analysisSwipeStartX = null;
+
+  if (Math.abs(deltaX) < 36) return;
+  stepAnalysisType(deltaX < 0 ? 1 : -1);
 });
 
 [elements.filters.from, elements.filters.to].forEach((filter) => {
@@ -2409,9 +3196,21 @@ elements.mobileDetailBackdrop.addEventListener("click", closeMobileCategoryDetai
 elements.mobileDetailClose.addEventListener("click", closeMobileCategoryDetail);
 
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !elements.dataActionMenu.classList.contains("hidden")) {
+    closeDataActionMenu();
+    elements.dataActionToggle.focus();
+    return;
+  }
+
   if (event.key === "Escape" && activeDetail && window.matchMedia("(max-width: 768px)").matches) {
     closeMobileCategoryDetail();
   }
+});
+
+document.addEventListener("click", (event) => {
+  if (elements.dataActionMenu.classList.contains("hidden")) return;
+  if (elements.dataActions.contains(event.target)) return;
+  closeDataActionMenu();
 });
 
 function showStartupFallback(error) {
@@ -2445,6 +3244,7 @@ async function initializeApp() {
     setDateInputValue(elements.date, todayIsoDate());
     setDateInputValue(elements.filters.from, firstDayOfCurrentMonthIsoDate());
     setDateInputValue(elements.filters.to, todayIsoDate());
+    updateCategoryControlForType();
     initDatePickers();
     saveCategories();
     render();
